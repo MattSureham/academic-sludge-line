@@ -5,6 +5,10 @@ from __future__ import annotations
 from textwrap import dedent
 
 
+def _excerpt(text: str, limit: int) -> str:
+    return text[:limit].strip() or "TODO"
+
+
 SYSTEM_POLICY = dedent(
     """
     You are assisting with transparent academic drafting. Do not invent data,
@@ -16,8 +20,7 @@ SYSTEM_POLICY = dedent(
 
 
 def plan_prompt(manifest: dict, brief: str, previous: str | None = None) -> str:
-    prior = f"\n\nPrevious draft to improve:\n{previous[:6000]}" if previous else ""
-    return dedent(
+    prompt = dedent(
         f"""
         Create a research plan for a paper draft.
 
@@ -26,8 +29,12 @@ def plan_prompt(manifest: dict, brief: str, previous: str | None = None) -> str:
         Research question: {manifest.get("research_question", "TODO")}
 
         Brief:
-        {brief}
+        """
+    ).strip()
+    prompt = f"{prompt}\n{brief.strip() or 'TODO'}"
 
+    prompt += "\n\n" + dedent(
+        """
         Return sections:
         1. Claim boundary
         2. Required evidence
@@ -35,14 +42,15 @@ def plan_prompt(manifest: dict, brief: str, previous: str | None = None) -> str:
         4. Method plan
         5. Outline
         6. Risks and TODOs
-        {prior}
         """
     ).strip()
+    if previous:
+        prompt += f"\n\nPrevious draft to improve:\n{_excerpt(previous, 6000)}"
+    return prompt
 
 
 def draft_prompt(manifest: dict, plan: str, brief: str, previous: str | None = None) -> str:
-    prior = f"\n\nPrevious draft to revise:\n{previous[:8000]}" if previous else ""
-    return dedent(
+    prompt = dedent(
         f"""
         Write a cautious academic working-paper draft in Markdown.
 
@@ -57,17 +65,18 @@ def draft_prompt(manifest: dict, plan: str, brief: str, previous: str | None = N
           needs verification.
 
         Brief:
-        {brief}
-
-        Research plan:
-        {plan}
-        {prior}
         """
     ).strip()
+    prompt = f"{prompt}\n{brief.strip() or 'TODO'}"
+
+    prompt += f"\n\nResearch plan:\n{plan.strip() or 'TODO'}"
+    if previous:
+        prompt += f"\n\nPrevious draft to revise:\n{_excerpt(previous, 8000)}"
+    return prompt
 
 
 def review_prompt(manifest: dict, draft: str, reviewer: str) -> str:
-    return dedent(
+    prompt = dedent(
         f"""
         Review this draft as the {reviewer} reviewer.
 
@@ -87,25 +96,26 @@ def review_prompt(manifest: dict, draft: str, reviewer: str) -> str:
         4. Accept/revise/reject recommendation
 
         Draft:
-        {draft[:10000]}
         """
     ).strip()
+    return f"{prompt}\n{_excerpt(draft, 10000)}"
 
 
 def revision_prompt(manifest: dict, draft: str, reviews: list[str]) -> str:
     joined = "\n\n---\n\n".join(reviews)
-    return dedent(
+    prompt = dedent(
         f"""
         Create a concrete revision plan.
 
         Title: {manifest["title"]}
 
         Draft:
-        {draft[:8000]}
+        """
+    ).strip()
+    prompt = f"{prompt}\n{_excerpt(draft, 8000)}\n\nReviews:\n{_excerpt(joined, 10000)}"
 
-        Reviews:
-        {joined[:10000]}
-
+    prompt += "\n\n" + dedent(
+        """
         Return:
         1. Non-negotiable fixes
         2. Evidence to collect
@@ -114,11 +124,12 @@ def revision_prompt(manifest: dict, draft: str, reviews: list[str]) -> str:
         5. Next-version checklist
         """
     ).strip()
+    return prompt
 
 
 def offline_plan(manifest: dict, brief: str, previous: str | None = None) -> str:
     revision_note = "This version should respond to the previous review cycle." if previous else "This is the initial plan."
-    return dedent(
+    template = dedent(
         f"""
         # Research Plan
 
@@ -155,14 +166,14 @@ def offline_plan(manifest: dict, brief: str, previous: str | None = None) -> str
         - Avoid fake precision, fake references, and unverified quotes.
 
         ## Topic Brief Snapshot
-        {brief[:1200]}
         """
     ).strip()
+    return f"{template}\n{_excerpt(brief, 1200)}"
 
 
 def offline_draft(manifest: dict, plan: str, brief: str, previous: str | None = None) -> str:
     version_note = "This draft incorporates a prior version and should be tightened against reviewer comments." if previous else "This is a first-pass scaffold."
-    return dedent(
+    template = dedent(
         f"""
         # {manifest["title"]}
 
@@ -207,18 +218,18 @@ def offline_draft(manifest: dict, plan: str, brief: str, previous: str | None = 
         - Claim: Empirical relationship. Status: [TODO: evidence]
 
         ## Brief Used
-        {brief[:1000]}
-
-        ## Plan Used
-        {plan[:1000]}
         """
     ).strip()
+    return f"{template}\n{_excerpt(brief, 1000)}\n\n## Plan Used\n{_excerpt(plan, 1000)}"
 
 
 def offline_review(manifest: dict, draft: str, reviewer: str) -> str:
-    return dedent(
+    template = dedent(
         f"""
         # {reviewer.title()} Review
+
+        Draft: **{manifest["title"]}**
+        Topic: **{manifest["topic"]}**
 
         ## Major Issues
         - The draft contains TODO markers that must be resolved before it can be treated as a paper.
@@ -236,14 +247,22 @@ def offline_review(manifest: dict, draft: str, reviewer: str) -> str:
 
         ## Recommendation
         Revise.
+
+        ## Draft Snapshot
         """
     ).strip()
+    return f"{template}\n{_excerpt(draft, 1000)}"
 
 
 def offline_revision(manifest: dict, draft: str, reviews: list[str]) -> str:
-    return dedent(
-        """
+    joined_reviews = "\n\n---\n\n".join(reviews)
+    template = dedent(
+        f"""
         # Revision Plan
+
+        Paper: **{manifest["title"]}**
+        Topic: **{manifest["topic"]}**
+        Review count: {len(reviews)}
 
         ## Non-Negotiable Fixes
         - Fill the evidence ledger before strengthening claims.
@@ -268,6 +287,8 @@ def offline_revision(manifest: dict, draft: str, reviews: list[str]) -> str:
         - [ ] Add data plan or analysis code.
         - [ ] Resolve TODO markers.
         - [ ] Re-run reviewer cycle.
+
+        ## Draft Snapshot
         """
     ).strip()
-
+    return f"{template}\n{_excerpt(draft, 1200)}\n\n## Review Signals\n{_excerpt(joined_reviews, 1600)}"

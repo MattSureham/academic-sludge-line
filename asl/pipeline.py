@@ -21,7 +21,14 @@ from .workspace import latest_version, next_version, read_json, read_text, slugi
 DEFAULT_REVIEWERS = ("methods", "evidence", "style")
 
 
-def init_project(root: Path, title: str, topic: str, brief: str, slug: str | None = None) -> Path:
+def init_project(
+    root: Path,
+    title: str,
+    topic: str,
+    brief: str,
+    slug: str | None = None,
+    research_question: str | None = None,
+) -> Path:
     project_slug = slugify(slug or title)
     project_dir = root / "papers" / project_slug
     if project_dir.exists():
@@ -31,7 +38,7 @@ def init_project(root: Path, title: str, topic: str, brief: str, slug: str | Non
         "schema": "academic-sludge-line.paper.v1",
         "title": title,
         "topic": topic,
-        "research_question": f"How should researchers evaluate {topic}?",
+        "research_question": research_question or f"What evidence is needed to study {topic}?",
         "created_at": utc_now(),
         "policies": {
             "no_fake_citations": True,
@@ -138,4 +145,3 @@ Previous version: {previous}
 ## Topic Brief
 {brief}
 """
-

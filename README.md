@@ -43,6 +43,7 @@ asl init \
   --slug demo-policy-paper \
   --title "Demo Policy Paper" \
   --topic "a policy question that still needs verified evidence" \
+  --research-question "What evidence would make this policy evaluation credible?" \
   --brief-file examples/topic_brief.md
 
 asl run papers/demo-policy-paper --cycles 2 --offline

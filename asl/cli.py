@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--slug", help="paper slug")
     init.add_argument("--title", required=True, help="paper title")
     init.add_argument("--topic", required=True, help="short topic description")
+    init.add_argument("--research-question", help="custom research question")
     init.add_argument("--brief-file", type=Path, help="markdown topic brief")
     init.add_argument("--brief", help="inline topic brief")
 
@@ -54,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             topic=args.topic,
             brief=brief,
             slug=args.slug,
+            research_question=args.research_question,
         )
         print(project_dir)
         return 0
@@ -80,4 +82,3 @@ def _load_brief(brief_file: Path | None, inline: str | None) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
