@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "academic-sludge-line"
+version = "0.1.0"
+description = "A satirical but serious framework for transparent iterative academic drafting."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Matt Sureham" }]
+dependencies = []
+
+[project.scripts]
+asl = "asl.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["asl*"]
+
