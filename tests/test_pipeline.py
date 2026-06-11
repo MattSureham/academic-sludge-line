@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from asl.cli import main
-from asl.llm import LLMClient
+from asl.llm import LLMClient, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
 from asl.templates import (
     draft_prompt,
@@ -173,6 +173,84 @@ def test_llm_failure_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "offline fallback used" in result.text
 
 
+def test_model_chain_parses_provider_model_and_endpoint() -> None:
+    specs = parse_model_chain("openai:gpt-4.1,openai-compat:llama@http://127.0.0.1:8000/v1")
+
+    assert specs[0].provider == "openai"
+    assert specs[0].model == "gpt-4.1"
+    assert specs[1].provider == "openai-compat"
+    assert specs[1].model == "llama"
+    assert specs[1].endpoint == "http://127.0.0.1:8000/v1"
+
+
+def test_llm_client_uses_role_specific_model_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    calls = []
+
+    def fake_urlopen(request: object, timeout: int) -> object:
+        calls.append(_request_json(request))
+        return _JsonResponse({"output_text": "ok"})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = LLMClient(
+        model_routes={
+            "default": "openai:default-model",
+            "draft": "openai:draft-model",
+            "review": "openai:review-model",
+        }
+    )
+
+    draft = client.generate("draft prompt", "fallback", role="draft")
+    review = client.generate("review prompt", "fallback", role="review")
+
+    assert draft.model == "draft-model"
+    assert review.model == "review-model"
+    assert [call["model"] for call in calls] == ["draft-model", "review-model"]
+
+
+def test_llm_client_tries_model_alternatives(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-key")
+    urls = []
+
+    def fake_urlopen(request: object, timeout: int) -> object:
+        urls.append(getattr(request, "full_url"))
+        return _JsonResponse({"choices": [{"message": {"content": "deepseek ok"}}]})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = LLMClient(model_routes={"draft": "openai:gpt-missing,deepseek:deepseek-chat"})
+
+    result = client.generate("prompt", "fallback", role="draft")
+
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-chat"
+    assert result.text == "deepseek ok"
+    assert "missing credentials" in result.attempts[0]
+    assert urls == ["https://api.deepseek.com/v1/chat/completions"]
+
+
+def test_pipeline_records_stage_model_routes(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="models",
+        title="Models",
+        topic="model routing",
+        brief="Use model routing.",
+        model_routes={
+            "draft": "anthropic:claude-sonnet-4-20250514",
+            "review": "deepseek:deepseek-chat",
+        },
+    )
+
+    created = PaperPipeline(project, client=LLMClient(offline=True)).run()
+
+    metadata = read_json(created[0] / "metadata.json")
+    assert metadata["models"]["requested"]["draft"] == ["anthropic:claude-sonnet-4-20250514"]
+    assert metadata["models"]["requested"]["review"] == ["deepseek:deepseek-chat"]
+    assert metadata["models"]["used"]["draft"]["provider"] == "offline"
+    assert metadata["models"]["used"]["reviews"]["methods"]["provider"] == "offline"
+
+
 def test_empty_brief_can_run_offline(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path,
@@ -265,3 +343,26 @@ sys.stdout.write(json.dumps(result))
     path.write_text(script, encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+class _JsonResponse:
+    def __init__(self, body: dict) -> None:
+        import json
+
+        self.body = json.dumps(body).encode("utf-8")
+
+    def __enter__(self) -> "_JsonResponse":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def _request_json(request: object) -> dict:
+    import json
+
+    data = getattr(request, "data")
+    return json.loads(data.decode("utf-8"))

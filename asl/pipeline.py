@@ -36,6 +36,7 @@ def init_project(
     research_question: str | None = None,
     data_paths: tuple[Path, ...] = (),
     reference_paths: tuple[Path, ...] = (),
+    model_routes: dict[str, str] | None = None,
 ) -> Path:
     input_root = root.resolve()
     project_slug = slugify(slug or title)
@@ -59,6 +60,8 @@ def init_project(
             "references": [str(path) for path in resolve_input_paths(reference_paths, input_root)],
         },
     }
+    if model_routes:
+        manifest["models"] = model_routes
     write_json(project_dir / "project.json", manifest)
     write_text(project_dir / "topic_brief.md", brief)
     write_json(project_dir / "sources.json", [])
@@ -73,11 +76,18 @@ class PaperPipeline:
         data_paths: tuple[Path, ...] = (),
         reference_paths: tuple[Path, ...] = (),
         smart_loader_path: Path | None = None,
+        model_routes: dict[str, str] | None = None,
     ) -> None:
         self.project_dir = project_dir.resolve()
         self.client = client or LLMClient()
         self.manifest = read_json(self.project_dir / "project.json")
         self.brief = read_text(self.project_dir / "topic_brief.md")
+        manifest_models = self.manifest.get("models", {})
+        if not isinstance(manifest_models, dict):
+            manifest_models = {}
+        merged_model_routes = {**manifest_models, **(model_routes or {})}
+        if merged_model_routes and hasattr(self.client, "with_model_routes"):
+            self.client = self.client.with_model_routes(merged_model_routes)
         manifest_inputs = self.manifest.get("inputs", {})
         if not isinstance(manifest_inputs, dict):
             manifest_inputs = {}
@@ -118,30 +128,40 @@ class PaperPipeline:
             _prompt_record(self.manifest, brief, previous_dir.name if previous_dir else None, loaded_inputs),
         )
 
-        plan = self.client.generate(
+        plan = _generate(
+            self.client,
             plan_prompt(self.manifest, brief, previous_draft),
             offline_plan(self.manifest, brief, previous_draft),
+            role="plan",
         )
         write_text(version_dir / "research_plan.md", plan.text)
 
-        draft = self.client.generate(
+        draft = _generate(
+            self.client,
             draft_prompt(self.manifest, plan.text, brief, previous_draft),
             offline_draft(self.manifest, plan.text, brief, previous_draft),
+            role="draft",
         )
         write_text(version_dir / "draft.md", draft.text)
 
         review_texts = []
+        review_models = {}
         for reviewer in reviewers:
-            review = self.client.generate(
+            review = _generate(
+                self.client,
                 review_prompt(self.manifest, draft.text, reviewer),
                 offline_review(self.manifest, draft.text, reviewer),
+                role="review",
             )
             review_texts.append(review.text)
+            review_models[reviewer] = _result_metadata(review)
             write_text(version_dir / "reviews" / f"{reviewer}.md", review.text)
 
-        revision = self.client.generate(
+        revision = _generate(
+            self.client,
             revision_prompt(self.manifest, draft.text, review_texts),
             offline_revision(self.manifest, draft.text, review_texts),
+            role="revision",
         )
         write_text(version_dir / "revision_plan.md", revision.text)
 
@@ -155,6 +175,15 @@ class PaperPipeline:
                 "provider": draft.provider,
                 "model": draft.model,
                 "reviewers": list(reviewers),
+                "models": {
+                    "requested": _route_metadata(self.client),
+                    "used": {
+                        "plan": _result_metadata(plan),
+                        "draft": _result_metadata(draft),
+                        "reviews": review_models,
+                        "revision": _result_metadata(revision),
+                    },
+                },
                 "loaded_inputs": [group.metadata() for group in loaded_inputs],
                 "outputs": [
                     "prompt.md",
@@ -225,3 +254,24 @@ def _project_root(project_dir: Path) -> Path:
     if project_dir.parent.name == "papers":
         return project_dir.parent.parent
     return project_dir.parent
+
+
+def _route_metadata(client: LLMClient) -> dict[str, list[str]]:
+    if hasattr(client, "route_metadata"):
+        return client.route_metadata()
+    return {}
+
+
+def _generate(client: LLMClient, prompt: str, fallback: str, role: str) -> object:
+    try:
+        return client.generate(prompt, fallback, role=role)
+    except TypeError:
+        return client.generate(prompt, fallback)
+
+
+def _result_metadata(result: object) -> dict[str, object]:
+    return {
+        "provider": getattr(result, "provider", "unknown"),
+        "model": getattr(result, "model", "unknown"),
+        "attempts": list(getattr(result, "attempts", ())),
+    }

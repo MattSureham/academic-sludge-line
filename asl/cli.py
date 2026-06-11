@@ -28,7 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--research-question", help="custom research question")
     init.add_argument("--brief-file", type=Path, help="markdown topic brief")
     init.add_argument("--brief", help="inline topic brief")
+    init.add_argument("--model", help="default model route to store for this paper")
     init.add_argument("--data", action="append", type=Path, default=[], help="data file or directory to load")
+    _add_model_route_args(init, persist=True)
     init.add_argument(
         "--references",
         "--reference",
@@ -42,7 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("project_dir", type=Path, help="path to papers/<slug>")
     run.add_argument("--cycles", type=int, default=1, help="number of versions to create")
     run.add_argument("--offline", action="store_true", help="force template-only mode")
-    run.add_argument("--model", help="model name when OPENAI_API_KEY is set")
+    run.add_argument("--model", help="default model route for this run")
+    _add_model_route_args(run, persist=False)
     run.add_argument("--data", action="append", type=Path, default=[], help="additional data file or directory to load")
     run.add_argument(
         "--references",
@@ -81,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             research_question=args.research_question,
             data_paths=tuple(args.data),
             reference_paths=tuple(args.references),
+            model_routes=_model_routes_from_args(args),
         )
         print(project_dir)
         return 0
@@ -93,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             data_paths=tuple(args.data),
             reference_paths=tuple(args.references),
             smart_loader_path=args.smart_loader,
+            model_routes=_model_routes_from_args(args),
         )
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
@@ -109,6 +114,25 @@ def _load_brief(brief_file: Path | None, inline: str | None) -> str:
     if inline:
         return inline
     return "No brief provided yet. Add sources, scope, and intended evidence before drafting."
+
+
+def _add_model_route_args(parser: argparse.ArgumentParser, persist: bool) -> None:
+    scope = "store project default" if persist else "override this run"
+    parser.add_argument("--plan-model", help=f"model route for research planning ({scope})")
+    parser.add_argument("--draft-model", help=f"model route for drafting ({scope})")
+    parser.add_argument("--review-model", help=f"model route for reviewer reports ({scope})")
+    parser.add_argument("--revision-model", help=f"model route for revision planning ({scope})")
+
+
+def _model_routes_from_args(args: argparse.Namespace) -> dict[str, str]:
+    routes = {}
+    if getattr(args, "model", None):
+        routes["default"] = args.model
+    for role in ("plan", "draft", "review", "revision"):
+        value = getattr(args, f"{role}_model", None)
+        if value:
+            routes[role] = value
+    return routes
 
 
 if __name__ == "__main__":

@@ -7,8 +7,18 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Mapping
 
 from .templates import SYSTEM_POLICY
+
+
+ROLE_DEFAULT = "default"
+ROLE_PLAN = "plan"
+ROLE_DRAFT = "draft"
+ROLE_REVIEW = "review"
+ROLE_REVISION = "revision"
+
+MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION)
 
 
 @dataclass(frozen=True)
@@ -16,51 +26,241 @@ class LLMResult:
     text: str
     provider: str
     model: str
+    attempts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    provider: str
+    model: str
+    endpoint: str | None = None
+
+    @property
+    def label(self) -> str:
+        suffix = f"@{self.endpoint}" if self.endpoint else ""
+        return f"{self.provider}:{self.model}{suffix}"
+
+
+@dataclass(frozen=True)
+class ModelRoutes:
+    raw: dict[str, str]
+    routes: dict[str, tuple[ModelSpec, ...]]
+
+    @classmethod
+    def build(cls, default_model: str | None = None, routes: Mapping[str, str] | None = None) -> "ModelRoutes":
+        raw: dict[str, str] = {}
+        default = default_model or os.getenv("ASL_MODEL") or "gpt-4.1-mini"
+        raw[ROLE_DEFAULT] = default
+        for role, value in (routes or {}).items():
+            if role in MODEL_ROLES and value:
+                raw[role] = value
+
+        parsed = {role: parse_model_chain(value) for role, value in raw.items()}
+        return cls(raw=raw, routes=parsed)
+
+    def with_overrides(self, routes: Mapping[str, str]) -> "ModelRoutes":
+        raw = dict(self.raw)
+        for role, value in routes.items():
+            if role in MODEL_ROLES and value:
+                raw[role] = value
+        return ModelRoutes.build(routes=raw)
+
+    def for_role(self, role: str) -> tuple[ModelSpec, ...]:
+        return self.routes.get(role) or self.routes[ROLE_DEFAULT]
+
+    def metadata(self) -> dict[str, list[str]]:
+        return {role: [spec.label for spec in specs] for role, specs in self.routes.items()}
 
 
 class LLMClient:
-    """Generate text through OpenAI Responses API or a caller-supplied fallback."""
+    """Generate text through role-specific model routes with an offline fallback."""
 
-    def __init__(self, offline: bool = False, model: str | None = None) -> None:
+    def __init__(
+        self,
+        offline: bool = False,
+        model: str | None = None,
+        model_routes: Mapping[str, str] | None = None,
+    ) -> None:
         self.offline = offline
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
-        self.model = model or os.getenv("ASL_MODEL", "gpt-4.1-mini")
+        self.routes = ModelRoutes.build(default_model=model, routes=model_routes)
+        default = self.routes.for_role(ROLE_DEFAULT)[0]
+        self.api_key = _api_key_for(default)
+        self.model = default.model
 
     @property
     def available(self) -> bool:
-        return bool(self.api_key) and not self.offline
+        if self.offline:
+            return False
+        return any(_spec_available(spec) for spec in self.routes.for_role(ROLE_DEFAULT))
 
-    def generate(self, prompt: str, fallback: str) -> LLMResult:
+    def with_model_routes(self, routes: Mapping[str, str]) -> "LLMClient":
+        return LLMClient(offline=self.offline, model_routes=self.routes.with_overrides(routes).raw)
+
+    def route_metadata(self) -> dict[str, list[str]]:
+        return self.routes.metadata()
+
+    def generate(self, prompt: str, fallback: str, role: str = ROLE_DEFAULT) -> LLMResult:
         if not self.available:
-            return LLMResult(text=fallback, provider="offline", model="template")
+            if self.offline:
+                return LLMResult(text=fallback, provider="offline", model="template")
 
-        payload = {
-            "model": self.model,
-            "input": [
-                {"role": "system", "content": SYSTEM_POLICY},
-                {"role": "user", "content": prompt},
-            ],
-        }
-        request = urllib.request.Request(
-            "https://api.openai.com/v1/responses",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            note = f"\n\n<!-- LLM call failed; offline fallback used: {type(exc).__name__}: {exc} -->"
-            return LLMResult(text=fallback + note, provider="offline-after-error", model="template")
+        attempts: list[str] = []
+        for spec in self.routes.for_role(role):
+            if spec.provider in {"offline", "template"}:
+                return LLMResult(text=fallback, provider="offline", model="template", attempts=tuple(attempts))
 
-        return LLMResult(text=_extract_text(body) or fallback, provider="openai", model=self.model)
+            if not _spec_available(spec):
+                attempts.append(f"{spec.label}: missing credentials or endpoint")
+                continue
+
+            try:
+                text = self._generate_with_spec(spec, prompt)
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                attempts.append(f"{spec.label}: {type(exc).__name__}: {exc}")
+                continue
+
+            if text.strip():
+                return LLMResult(text=text, provider=spec.provider, model=spec.model, attempts=tuple(attempts))
+            attempts.append(f"{spec.label}: empty response")
+
+        if attempts:
+            missing_only = all("missing credentials or endpoint" in attempt for attempt in attempts)
+            if missing_only:
+                return LLMResult(text=fallback, provider="offline", model="template", attempts=tuple(attempts))
+            joined = "; ".join(attempts)
+            note = f"\n\n<!-- LLM call failed; offline fallback used: {joined} -->"
+            return LLMResult(
+                text=fallback + note,
+                provider="offline-after-error",
+                model="template",
+                attempts=tuple(attempts),
+            )
+
+        return LLMResult(text=fallback, provider="offline", model="template")
+
+    def _generate_with_spec(self, spec: ModelSpec, prompt: str) -> str:
+        if spec.provider == "openai":
+            return _call_openai_responses(spec, prompt)
+        if spec.provider == "anthropic":
+            return _call_anthropic(spec, prompt)
+        if spec.provider == "gemini":
+            return _call_gemini(spec, prompt)
+        if spec.provider == "ollama":
+            return _call_ollama(spec, prompt)
+        if spec.provider in {"deepseek", "qwen", "kimi", "kimi-code", "openai-compat"}:
+            return _call_chat_completions(spec, prompt)
+        raise ValueError(f"unsupported provider: {spec.provider}")
 
 
-def _extract_text(body: dict) -> str:
+def parse_model_chain(value: str) -> tuple[ModelSpec, ...]:
+    specs = []
+    for raw_item in value.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        endpoint = None
+        if "@" in item:
+            item, endpoint = item.split("@", 1)
+            endpoint = endpoint.strip() or None
+        if item in {"offline", "template"}:
+            specs.append(ModelSpec(provider="offline", model="template"))
+            continue
+        if ":" in item:
+            provider, model = item.split(":", 1)
+        else:
+            provider, model = os.getenv("ASL_PROVIDER", "openai"), item
+        specs.append(ModelSpec(provider=provider.strip().lower(), model=model.strip(), endpoint=endpoint))
+
+    if not specs:
+        raise ValueError("model route must include at least one model")
+    return tuple(specs)
+
+
+def _call_openai_responses(spec: ModelSpec, prompt: str) -> str:
+    payload = {
+        "model": spec.model,
+        "input": [
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    body = _post_json(
+        _endpoint_for(spec, "/responses"),
+        payload,
+        {"Authorization": f"Bearer {_api_key_for(spec)}"},
+    )
+    return _extract_openai_responses_text(body)
+
+
+def _call_chat_completions(spec: ModelSpec, prompt: str) -> str:
+    payload = {
+        "model": spec.model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    headers = {}
+    api_key = _api_key_for(spec)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    body = _post_json(_endpoint_for(spec, "/chat/completions"), payload, headers)
+    return body["choices"][0]["message"]["content"].strip()
+
+
+def _call_anthropic(spec: ModelSpec, prompt: str) -> str:
+    payload = {
+        "model": spec.model,
+        "max_tokens": 4096,
+        "system": SYSTEM_POLICY,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    body = _post_json(
+        _endpoint_for(spec, "/messages"),
+        payload,
+        {
+            "x-api-key": _api_key_for(spec),
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    chunks = []
+    for item in body.get("content", []):
+        if item.get("type") == "text" and isinstance(item.get("text"), str):
+            chunks.append(item["text"])
+    return "\n".join(chunks).strip()
+
+
+def _call_gemini(spec: ModelSpec, prompt: str) -> str:
+    base = _endpoint_for(spec, f"/models/{spec.model}:generateContent")
+    url = f"{base}?key={_api_key_for(spec)}"
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_POLICY}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+    }
+    body = _post_json(url, payload, {})
+    chunks = []
+    for candidate in body.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            if isinstance(part.get("text"), str):
+                chunks.append(part["text"])
+    return "\n".join(chunks).strip()
+
+
+def _call_ollama(spec: ModelSpec, prompt: str) -> str:
+    payload = {
+        "model": spec.model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    body = _post_json(_endpoint_for(spec, "/api/chat"), payload, {})
+    return body.get("message", {}).get("content", "").strip()
+
+
+def _extract_openai_responses_text(body: dict) -> str:
     if isinstance(body.get("output_text"), str):
         return body["output_text"]
 
@@ -72,3 +272,83 @@ def _extract_text(body: dict) -> str:
                 chunks.append(text)
     return "\n".join(chunks).strip()
 
+
+def _post_json(url: str, payload: dict, headers: dict[str, str]) -> dict:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            **headers,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _endpoint_for(spec: ModelSpec, path: str) -> str:
+    endpoint = spec.endpoint or _env_endpoint_for(spec.provider) or _default_endpoint_for(spec.provider)
+    endpoint = endpoint.rstrip("/")
+    if endpoint.endswith(path):
+        return endpoint
+    return f"{endpoint}{path}"
+
+
+def _default_endpoint_for(provider: str) -> str:
+    defaults = {
+        "openai": "https://api.openai.com/v1",
+        "anthropic": "https://api.anthropic.com/v1",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta",
+        "deepseek": "https://api.deepseek.com/v1",
+        "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "kimi": "https://api.moonshot.ai/v1",
+        "kimi-code": "https://api.kimi.com/coding/v1",
+        "ollama": "http://127.0.0.1:11434",
+        "openai-compat": os.getenv("OPENAI_COMPAT_ENDPOINT", ""),
+    }
+    endpoint = defaults.get(provider, "")
+    if not endpoint:
+        raise ValueError(f"endpoint is required for provider: {provider}")
+    return endpoint
+
+
+def _env_endpoint_for(provider: str) -> str:
+    env_name = f"ASL_{_provider_env_prefix(provider)}_ENDPOINT"
+    return os.getenv(env_name, "")
+
+
+def _api_key_for(spec: ModelSpec) -> str:
+    provider = spec.provider
+    prefix = _provider_env_prefix(provider)
+    explicit = os.getenv(f"ASL_{prefix}_API_KEY", "")
+    if explicit:
+        return explicit
+
+    env_names = {
+        "openai": ("OPENAI_API_KEY",),
+        "anthropic": ("ANTHROPIC_API_KEY",),
+        "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        "deepseek": ("DEEPSEEK_API_KEY",),
+        "qwen": ("QWEN_API_KEY",),
+        "kimi": ("MOONSHOT_API_KEY", "KIMI_API_KEY"),
+        "kimi-code": ("KIMI_API_KEY",),
+        "openai-compat": ("OPENAI_COMPAT_API_KEY",),
+    }
+    for name in env_names.get(provider, ()):
+        value = os.getenv(name, "")
+        if value:
+            return value
+    return ""
+
+
+def _provider_env_prefix(provider: str) -> str:
+    return provider.upper().replace("-", "_")
+
+
+def _spec_available(spec: ModelSpec) -> bool:
+    if spec.provider in {"offline", "template", "ollama"}:
+        return True
+    if spec.provider == "openai-compat":
+        return bool(spec.endpoint or _env_endpoint_for(spec.provider) or os.getenv("OPENAI_COMPAT_ENDPOINT", ""))
+    return bool(_api_key_for(spec))
