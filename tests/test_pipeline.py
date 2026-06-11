@@ -6,7 +6,7 @@ import pytest
 
 from asl.catalog import catalog_payload
 from asl.cli import main
-from asl.llm import LLMClient, parse_model_chain
+from asl.llm import LLMClient, LLMResult, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
 from asl.templates import (
     draft_prompt,
@@ -280,6 +280,54 @@ def test_pipeline_records_stage_model_routes(tmp_path: Path) -> None:
     assert metadata["models"]["used"]["reviews"]["methods"]["provider"] == "offline"
 
 
+def test_discover_topic_mode_can_start_without_fixed_topic(tmp_path: Path) -> None:
+    code = main(
+        [
+            "init",
+            "--root",
+            str(tmp_path),
+            "--slug",
+            "discover",
+            "--title",
+            "Discover",
+            "--start-mode",
+            "discover-topic",
+            "--brief",
+            "Dataset: municipal program outcomes. Reference: policy adoption memo.",
+        ]
+    )
+
+    assert code == 0
+    project = tmp_path / "papers" / "discover"
+    code = main(["run", str(project), "--offline"])
+
+    assert code == 0
+    assert (project / "v1" / "topic_proposal.md").exists()
+    metadata = read_json(project / "v1" / "metadata.json")
+    assert metadata["start_mode"] == "discover-topic"
+    assert metadata["accepted"] is True
+
+
+def test_worse_candidate_is_kept_but_not_accepted(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="quality",
+        title="Quality",
+        topic="quality gates",
+        brief="Use quality gates.",
+    )
+    first = PaperPipeline(project, client=LLMClient(offline=True)).run()[0]
+
+    second = PaperPipeline(project, client=_WorseCandidateClient()).run()[0]
+
+    assert (project / "accepted_version.txt").read_text(encoding="utf-8").strip() == first.name
+    assert (second / "draft.md").exists()
+    metadata = read_json(second / "metadata.json")
+    assert metadata["accepted"] is False
+    assert metadata["quality_gate"]["decision"] == "rejected"
+    assert metadata["previous_accepted_version"] == first.name
+
+
 def test_empty_brief_can_run_offline(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path,
@@ -395,3 +443,27 @@ def _request_json(request: object) -> dict:
 
     data = getattr(request, "data")
     return json.loads(data.decode("utf-8"))
+
+
+class _WorseCandidateClient:
+    def with_model_routes(self, routes: dict[str, str]) -> "_WorseCandidateClient":
+        return self
+
+    def route_metadata(self) -> dict[str, list[str]]:
+        return {"score": ["fake:worse-scorer"]}
+
+    def generate(self, prompt: str, fallback: str, role: str = "default") -> LLMResult:
+        if role == "draft":
+            return LLMResult(text="# Worse Draft\n\nUnsupported claim.", provider="fake", model="worse-writer")
+        return LLMResult(text=fallback, provider="fake", model=f"{role}-fallback")
+
+    def generate_all(self, prompt: str, fallback: str, role: str) -> list[LLMResult]:
+        if role == "score":
+            return [
+                LLMResult(
+                    text='{"verdict":"worse","previous_score":8,"candidate_score":2,"rationale":"Less complete."}',
+                    provider="fake",
+                    model="worse-scorer",
+                )
+            ]
+        return [self.generate(prompt, fallback, role=role)]

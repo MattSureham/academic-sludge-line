@@ -117,6 +117,57 @@ data/reference paths, run cycles, and preview generated outputs. It uses the sam
 provider/model catalog as the CLI and defaults the local OpenAI-compatible vLLM
 preset to `http://127.0.0.1:8000/v1`.
 
+## Starting Modes And Quality Gate
+
+ASL can start a writing task in three modes:
+
+```bash
+# Start from a fixed topic.
+asl init \
+  --slug fixed-topic \
+  --title "Fixed Topic Paper" \
+  --topic "local public-program evaluation" \
+  --brief-file examples/topic_brief.md
+
+# Discover a topic from supplied data and references.
+asl init \
+  --slug discovered-topic \
+  --title "Evidence-Led Paper" \
+  --start-mode discover-topic \
+  --data data/ \
+  --references references/ \
+  --brief "Find a responsible research question from the materials."
+
+# Rewrite from an existing draft.
+asl init \
+  --slug rewrite-paper \
+  --title "Rewrite Paper" \
+  --topic "local public-program evaluation" \
+  --start-mode rewrite \
+  --seed-draft-file old_draft.md
+```
+
+`discover-topic` writes `topic_proposal.md` into each generated version before
+planning and drafting. `rewrite` uses the previous accepted draft, or the seed
+draft if there is no accepted version yet.
+
+Every run still writes a candidate `vN/` directory, but ASL now maintains an
+`accepted_version.txt` pointer. If the score gate judges the candidate worse
+than the previous accepted draft, the candidate is kept as a rejected version and
+the accepted pointer does not move.
+
+Use multiple scoring models with `--score-model`:
+
+```bash
+asl run papers/fixed-topic \
+  --cycles 3 \
+  --draft-model openai-compat:local-model@http://127.0.0.1:8000/v1 \
+  --review-model deepseek:deepseek-chat \
+  --score-model deepseek:deepseek-reasoner,openai:gpt-4.1-mini
+```
+
+Score details are written to `quality_scores.json` and `metadata.json`.
+
 ## LLM Mode And Model Routing
 
 Offline mode is the default safest path for tests and demos. To use an LLM:
@@ -151,6 +202,7 @@ Each stage can have its own route:
 - `--draft-model` for paper drafting
 - `--review-model` for reviewer reports
 - `--revision-model` for the revision plan
+- `--score-model` for accepted/rejected quality scoring
 
 Routes can include alternatives, tried left to right:
 

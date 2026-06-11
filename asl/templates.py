@@ -127,6 +127,97 @@ def revision_prompt(manifest: dict, draft: str, reviews: list[str]) -> str:
     return prompt
 
 
+def topic_discovery_prompt(manifest: dict, brief: str) -> str:
+    prompt = dedent(
+        f"""
+        Identify a strong research topic from the supplied data and references.
+
+        Workspace title: {manifest["title"]}
+
+        Return exactly these sections:
+        Topic: <one sentence topic>
+        Research question: <one focused research question>
+        Rationale: <why the available materials can support it>
+        Evidence boundary: <what the data/references can and cannot support>
+        First outline: <5-7 bullet outline>
+
+        Source material:
+        """
+    ).strip()
+    return f"{prompt}\n{_excerpt(brief, 12000)}"
+
+
+def score_prompt(manifest: dict, previous_draft: str, candidate_draft: str) -> str:
+    prompt = dedent(
+        f"""
+        Compare a candidate paper draft against the currently accepted draft.
+
+        Title: {manifest["title"]}
+        Topic: {manifest["topic"]}
+
+        Criteria:
+        - better evidence discipline and fewer unsupported claims
+        - clearer research question and contribution
+        - more coherent structure
+        - stronger handling of limitations
+        - no invented citations, data, results, or overclaiming
+
+        Return only JSON with keys:
+        verdict: "better", "same", or "worse"
+        previous_score: integer 1-10
+        candidate_score: integer 1-10
+        rationale: concise explanation
+
+        Accepted draft:
+        """
+    ).strip()
+    return f"{prompt}\n{_excerpt(previous_draft, 9000)}\n\nCandidate draft:\n{_excerpt(candidate_draft, 9000)}"
+
+
+def offline_topic_discovery(manifest: dict, brief: str) -> str:
+    topic = manifest.get("topic") or "evidence-led topic from supplied materials"
+    if "TODO: discover" in topic:
+        topic = "Evidence-led topic from supplied data and references"
+    template = dedent(
+        f"""
+        Topic: {topic}
+        Research question: What question can be responsibly answered with the supplied data and references?
+        Rationale: The materials should be reviewed before making factual claims. Use them to narrow the topic,
+        identify the evidence boundary, and avoid unsupported conclusions.
+        Evidence boundary: Treat all claims as provisional until the loaded materials are mapped into an evidence ledger.
+        First outline:
+        - Research question and motivation
+        - Available data and references
+        - Evidence boundary
+        - Proposed method
+        - Expected limitations
+        - Next evidence collection steps
+
+        Material snapshot:
+        """
+    ).strip()
+    return f"{template}\n{_excerpt(brief, 1200)}"
+
+
+def offline_score(manifest: dict, previous_draft: str, candidate_draft: str) -> str:
+    previous_score = _heuristic_draft_score(previous_draft)
+    candidate_score = _heuristic_draft_score(candidate_draft)
+    if candidate_score > previous_score:
+        verdict = "better"
+    elif candidate_score < previous_score:
+        verdict = "worse"
+    else:
+        verdict = "same"
+    return (
+        "{\n"
+        f'  "verdict": "{verdict}",\n'
+        f'  "previous_score": {previous_score},\n'
+        f'  "candidate_score": {candidate_score},\n'
+        '  "rationale": "Offline heuristic rewards structure, evidence ledgers, and fewer unresolved TODO markers."\n'
+        "}"
+    )
+
+
 def offline_plan(manifest: dict, brief: str, previous: str | None = None) -> str:
     revision_note = "This version should respond to the previous review cycle." if previous else "This is the initial plan."
     template = dedent(
@@ -292,3 +383,18 @@ def offline_revision(manifest: dict, draft: str, reviews: list[str]) -> str:
         """
     ).strip()
     return f"{template}\n{_excerpt(draft, 1200)}\n\n## Review Signals\n{_excerpt(joined_reviews, 1600)}"
+
+
+def _heuristic_draft_score(draft: str) -> int:
+    text = draft.lower()
+    score = 5
+    score += min(2, text.count("##") // 3)
+    if "evidence ledger" in text:
+        score += 1
+    if "limitations" in text:
+        score += 1
+    todo_count = text.count("[todo")
+    score -= min(3, todo_count // 4)
+    if len(draft) < 1200:
+        score -= 1
+    return max(1, min(10, score))

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import __version__
 from .llm import LLMClient
-from .pipeline import DEFAULT_REVIEWERS, PaperPipeline, init_project
+from .pipeline import DEFAULT_REVIEWERS, START_MODES, PaperPipeline, init_project
 from .workspace import read_text
 
 
@@ -24,8 +24,15 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--root", default=".", help="repository root")
     init.add_argument("--slug", help="paper slug")
     init.add_argument("--title", required=True, help="paper title")
-    init.add_argument("--topic", required=True, help="short topic description")
+    init.add_argument("--topic", help="short topic description")
     init.add_argument("--research-question", help="custom research question")
+    init.add_argument(
+        "--start-mode",
+        choices=START_MODES,
+        default="from-scratch",
+        help="paper starting mode",
+    )
+    init.add_argument("--seed-draft-file", type=Path, help="existing draft to rewrite")
     init.add_argument("--brief-file", type=Path, help="markdown topic brief")
     init.add_argument("--brief", help="inline topic brief")
     init.add_argument("--model", help="default model route to store for this paper")
@@ -44,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("project_dir", type=Path, help="path to papers/<slug>")
     run.add_argument("--cycles", type=int, default=1, help="number of versions to create")
     run.add_argument("--offline", action="store_true", help="force template-only mode")
+    run.add_argument("--start-mode", choices=START_MODES, help="override paper starting mode")
+    run.add_argument("--seed-draft-file", type=Path, help="existing draft to rewrite")
     run.add_argument("--model", help="default model route for this run")
     _add_model_route_args(run, persist=False)
     run.add_argument("--data", action="append", type=Path, default=[], help="additional data file or directory to load")
@@ -79,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "init":
+        if args.start_mode != "discover-topic" and not args.topic:
+            parser.error("--topic is required unless --start-mode discover-topic is used")
         brief = _load_brief(args.brief_file, args.brief)
         project_dir = init_project(
             root=Path(args.root),
@@ -90,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
             data_paths=tuple(args.data),
             reference_paths=tuple(args.references),
             model_routes=_model_routes_from_args(args),
+            start_mode=args.start_mode,
+            seed_draft_path=args.seed_draft_file,
         )
         print(project_dir)
         return 0
@@ -103,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
             reference_paths=tuple(args.references),
             smart_loader_path=args.smart_loader,
             model_routes=_model_routes_from_args(args),
+            start_mode=args.start_mode,
+            seed_draft_path=args.seed_draft_file,
         )
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
@@ -133,13 +148,14 @@ def _add_model_route_args(parser: argparse.ArgumentParser, persist: bool) -> Non
     parser.add_argument("--draft-model", help=f"model route for drafting ({scope})")
     parser.add_argument("--review-model", help=f"model route for reviewer reports ({scope})")
     parser.add_argument("--revision-model", help=f"model route for revision planning ({scope})")
+    parser.add_argument("--score-model", help=f"model route(s) for quality scoring ({scope})")
 
 
 def _model_routes_from_args(args: argparse.Namespace) -> dict[str, str]:
     routes = {}
     if getattr(args, "model", None):
         routes["default"] = args.model
-    for role in ("plan", "draft", "review", "revision"):
+    for role in ("plan", "draft", "review", "revision", "score"):
         value = getattr(args, f"{role}_model", None)
         if value:
             routes[role] = value

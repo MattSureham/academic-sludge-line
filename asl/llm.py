@@ -18,8 +18,9 @@ ROLE_PLAN = "plan"
 ROLE_DRAFT = "draft"
 ROLE_REVIEW = "review"
 ROLE_REVISION = "revision"
+ROLE_SCORE = "score"
 
-MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION)
+MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION, ROLE_SCORE)
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,45 @@ class LLMClient:
             )
 
         return LLMResult(text=fallback, provider="offline", model="template")
+
+    def generate_all(self, prompt: str, fallback: str, role: str) -> list[LLMResult]:
+        if self.offline:
+            return [LLMResult(text=fallback, provider="offline", model="template")]
+
+        results: list[LLMResult] = []
+        for spec in self.routes.for_role(role):
+            results.append(self.generate_one(prompt, fallback, spec))
+        return results or [LLMResult(text=fallback, provider="offline", model="template")]
+
+    def generate_one(self, prompt: str, fallback: str, spec: ModelSpec) -> LLMResult:
+        if spec.provider in {"offline", "template"}:
+            return LLMResult(text=fallback, provider="offline", model="template")
+        if not _spec_available(spec):
+            attempt = f"{spec.label}: missing credentials or endpoint"
+            return LLMResult(text=fallback, provider="offline", model="template", attempts=(attempt,))
+
+        try:
+            text = self._generate_with_spec(spec, prompt)
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            attempt = f"{spec.label}: {type(exc).__name__}: {exc}"
+            note = f"\n\n<!-- LLM call failed; offline fallback used: {attempt} -->"
+            return LLMResult(
+                text=fallback + note,
+                provider="offline-after-error",
+                model="template",
+                attempts=(attempt,),
+            )
+
+        if text.strip():
+            return LLMResult(text=text, provider=spec.provider, model=spec.model)
+        attempt = f"{spec.label}: empty response"
+        note = f"\n\n<!-- LLM call failed; offline fallback used: {attempt} -->"
+        return LLMResult(
+            text=fallback + note,
+            provider="offline-after-error",
+            model="template",
+            attempts=(attempt,),
+        )
 
     def _generate_with_spec(self, spec: ModelSpec, prompt: str) -> str:
         if spec.provider == "openai":

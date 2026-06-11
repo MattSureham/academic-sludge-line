@@ -53,3 +53,17 @@ def latest_version(project_dir: Path) -> Path | None:
         return None
     return sorted(versions)[-1][1]
 
+
+def accepted_version(project_dir: Path) -> Path | None:
+    marker = project_dir / "accepted_version.txt"
+    if marker.exists():
+        name = marker.read_text(encoding="utf-8").strip()
+        if name:
+            candidate = project_dir / name
+            if candidate.exists():
+                return candidate
+    return latest_version(project_dir)
+
+
+def write_accepted_version(project_dir: Path, version_dir: Path) -> None:
+    write_text(project_dir / "accepted_version.txt", version_dir.name)

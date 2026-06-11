@@ -188,6 +188,7 @@ def catalog_payload() -> dict:
             {"id": "draft", "name": "Draft"},
             {"id": "review", "name": "Review"},
             {"id": "revision", "name": "Revision plan"},
+            {"id": "score", "name": "Score gate"},
         ],
     }
 

@@ -118,6 +118,8 @@ def _create_project(payload: dict, cwd: Path) -> dict:
         data_paths=tuple(Path(path) for path in _split_paths(payload.get("data"))),
         reference_paths=tuple(Path(path) for path in _split_paths(payload.get("references"))),
         model_routes=_model_routes(payload.get("models", {})),
+        start_mode=payload.get("startMode") or "from-scratch",
+        seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
     )
     return {"projectDir": str(project), "project": _project_payload(project)}
 
@@ -132,6 +134,8 @@ def _run_project(payload: dict, cwd: Path) -> dict:
         reference_paths=tuple(Path(path) for path in _split_paths(payload.get("references"))),
         smart_loader_path=Path(payload["smartLoader"]) if payload.get("smartLoader") else None,
         model_routes=_model_routes(payload.get("models", {})),
+        start_mode=payload.get("startMode") or None,
+        seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
     )
     created = pipeline.run(cycles=max(1, int(payload.get("cycles") or 1)), reviewers=reviewers)
     return {
@@ -162,13 +166,21 @@ def _project_payload(project_dir: Path) -> dict:
         "path": str(project_dir),
         "manifest": read_json(manifest_path),
         "versions": versions,
+        "acceptedVersion": _accepted_marker(project_dir),
         "latest": _version_payload(Path(versions[-1]["path"])) if versions else {},
     }
 
 
 def _version_payload(version_dir: Path) -> dict:
     files = {}
-    for relative in ("research_plan.md", "draft.md", "revision_plan.md", "metadata.json"):
+    for relative in (
+        "topic_proposal.md",
+        "research_plan.md",
+        "draft.md",
+        "revision_plan.md",
+        "quality_scores.json",
+        "metadata.json",
+    ):
         path = version_dir / relative
         if path.exists():
             files[relative] = _preview(path)
@@ -208,6 +220,14 @@ def _list_projects(root: Path) -> list[dict[str, str]]:
                 }
             )
     return projects
+
+
+def _accepted_marker(project_dir: Path) -> str | None:
+    marker = project_dir / "accepted_version.txt"
+    if not marker.exists():
+        return None
+    value = marker.read_text(encoding="utf-8").strip()
+    return value or None
 
 
 def _resolve_path(value: str, cwd: Path) -> Path:
@@ -285,6 +305,19 @@ _INDEX_HTML = """<!doctype html>
             <input id="reviewers" name="reviewers" value="methods,evidence,style">
           </label>
         </div>
+        <div class="inline-fields">
+          <label>Start mode
+            <select id="runStartMode">
+              <option value="">Project default</option>
+              <option value="from-scratch">From scratch</option>
+              <option value="discover-topic">Discover topic</option>
+              <option value="rewrite">Rewrite</option>
+            </select>
+          </label>
+          <label>Seed draft
+            <input id="runSeedDraft" placeholder="path/to/draft.md">
+          </label>
+        </div>
         <label class="checkline">
           <input id="offline" name="offline" type="checkbox" checked>
           Offline
@@ -308,6 +341,18 @@ _INDEX_HTML = """<!doctype html>
           <input id="root" value=".">
         </label>
         <div class="inline-fields">
+          <label>Start mode
+            <select id="initStartMode">
+              <option value="from-scratch">From scratch with topic</option>
+              <option value="discover-topic">Discover topic from inputs</option>
+              <option value="rewrite">Rewrite existing draft</option>
+            </select>
+          </label>
+          <label>Seed draft
+            <input id="initSeedDraft" placeholder="path/to/draft.md">
+          </label>
+        </div>
+        <div class="inline-fields">
           <label>Slug
             <input id="slug" autocomplete="off">
           </label>
@@ -316,7 +361,7 @@ _INDEX_HTML = """<!doctype html>
           </label>
         </div>
         <label>Topic
-          <input id="topic" required autocomplete="off">
+          <input id="topic" autocomplete="off">
         </label>
         <label>Research question
           <input id="researchQuestion" autocomplete="off">
@@ -695,11 +740,12 @@ function renderProject(project) {
   const manifest = project.manifest || {};
   const latest = project.latest || {};
   state.latestFiles = latest.files || {};
-  $("projectSummary").innerHTML = `
+    $("projectSummary").innerHTML = `
     <div><strong>${manifest.title || "Untitled"}</strong></div>
     <div>${manifest.topic || ""}</div>
     <div>${project.path}</div>
     <div>${project.versions.length} version(s)</div>
+    <div>Accepted: ${project.acceptedVersion || "none yet"}</div>
   `;
   renderFileTabs();
 }
@@ -754,6 +800,8 @@ async function createProject(event) {
   setStatus("Creating");
   const payload = {
     root: $("root").value,
+    startMode: $("initStartMode").value,
+    seedDraftFile: $("initSeedDraft").value,
     slug: $("slug").value,
     title: $("title").value,
     topic: $("topic").value,
@@ -777,6 +825,8 @@ async function runProject(event) {
   const payload = {
     projectDir: $("runProjectDir").value,
     cycles: $("cycles").value,
+    startMode: $("runStartMode").value,
+    seedDraftFile: $("runSeedDraft").value,
     offline: $("offline").checked,
     reviewers: $("reviewers").value,
     data: $("runData").value,
