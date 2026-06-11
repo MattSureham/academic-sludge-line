@@ -12,6 +12,7 @@ TODO, refuses fake citations, and separates drafts from verified research.
 - Generates a research plan, draft, reviewer reports, and revision plan.
 - Supports an offline template mode that runs with no dependencies.
 - Optionally calls an LLM when `OPENAI_API_KEY` is available.
+- Loads optional data and reference files through `smart-loader` when paths are provided.
 - Keeps a `sources.json` placeholder so claims can be audited later.
 
 ## Install
@@ -66,6 +67,36 @@ papers/demo-policy-paper/
   v2/
     ...
 ```
+
+## Data And References
+
+If the adjacent `../smart-loader` project is available, ASL can load mixed
+document folders into the draft context:
+
+```bash
+asl init \
+  --slug demo-policy-paper \
+  --title "Demo Policy Paper" \
+  --topic "a policy question that still needs verified evidence" \
+  --brief-file examples/topic_brief.md \
+  --data data/ \
+  --references references/
+
+asl run papers/demo-policy-paper --offline
+```
+
+You can also add one-off inputs during a run:
+
+```bash
+asl run papers/demo-policy-paper \
+  --data new_dataset.csv \
+  --references notes/literature.md \
+  --offline
+```
+
+Loaded material is written under each version's `inputs/` folder and injected
+into the research plan and draft prompts. Set `ASL_SMART_LOADER` or pass
+`--smart-loader` if the loader lives somewhere other than `../smart-loader`.
 
 ## LLM Mode
 

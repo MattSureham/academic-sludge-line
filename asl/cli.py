@@ -28,12 +28,35 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--research-question", help="custom research question")
     init.add_argument("--brief-file", type=Path, help="markdown topic brief")
     init.add_argument("--brief", help="inline topic brief")
+    init.add_argument("--data", action="append", type=Path, default=[], help="data file or directory to load")
+    init.add_argument(
+        "--references",
+        "--reference",
+        action="append",
+        type=Path,
+        default=[],
+        help="reference file or directory to load",
+    )
 
     run = sub.add_parser("run", help="run one or more drafting cycles")
     run.add_argument("project_dir", type=Path, help="path to papers/<slug>")
     run.add_argument("--cycles", type=int, default=1, help="number of versions to create")
     run.add_argument("--offline", action="store_true", help="force template-only mode")
     run.add_argument("--model", help="model name when OPENAI_API_KEY is set")
+    run.add_argument("--data", action="append", type=Path, default=[], help="additional data file or directory to load")
+    run.add_argument(
+        "--references",
+        "--reference",
+        action="append",
+        type=Path,
+        default=[],
+        help="additional reference file or directory to load",
+    )
+    run.add_argument(
+        "--smart-loader",
+        type=Path,
+        help="path to smart-loader CLI, dist/cli.js, or repository",
+    )
     run.add_argument(
         "--reviewers",
         default=",".join(DEFAULT_REVIEWERS),
@@ -56,13 +79,21 @@ def main(argv: list[str] | None = None) -> int:
             brief=brief,
             slug=args.slug,
             research_question=args.research_question,
+            data_paths=tuple(args.data),
+            reference_paths=tuple(args.references),
         )
         print(project_dir)
         return 0
 
     if args.command == "run":
         reviewers = tuple(r.strip() for r in args.reviewers.split(",") if r.strip())
-        pipeline = PaperPipeline(args.project_dir, client=LLMClient(offline=args.offline, model=args.model))
+        pipeline = PaperPipeline(
+            args.project_dir,
+            client=LLMClient(offline=args.offline, model=args.model),
+            data_paths=tuple(args.data),
+            reference_paths=tuple(args.references),
+            smart_loader_path=args.smart_loader,
+        )
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
             print(path)

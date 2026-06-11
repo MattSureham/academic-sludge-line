@@ -1,3 +1,4 @@
+import sys
 import urllib.error
 from pathlib import Path
 
@@ -115,6 +116,49 @@ def test_init_allows_custom_research_question(tmp_path: Path) -> None:
     assert manifest["research_question"] == "What evidence makes a public-program evaluation transparent?"
 
 
+def test_smart_loader_context_is_loaded_for_data_and_references(tmp_path: Path) -> None:
+    (tmp_path / "data.csv").write_text("unit,value\nalpha,1\n", encoding="utf-8")
+    (tmp_path / "refs.md").write_text("# Reference Note\nVerified reference text.\n", encoding="utf-8")
+    fake_loader = _write_fake_smart_loader(tmp_path / "fake-smart-loader")
+
+    code = main(
+        [
+            "init",
+            "--root",
+            str(tmp_path),
+            "--slug",
+            "with-inputs",
+            "--title",
+            "With Inputs",
+            "--topic",
+            "documented evidence",
+            "--brief",
+            "Use attached materials.",
+            "--data",
+            "data.csv",
+            "--references",
+            "refs.md",
+        ]
+    )
+    assert code == 0
+
+    project = tmp_path / "papers" / "with-inputs"
+    code = main(["run", str(project), "--offline", "--smart-loader", str(fake_loader)])
+
+    assert code == 0
+    assert (project / "v1" / "inputs" / "data.md").exists()
+    assert (project / "v1" / "inputs" / "references.md").exists()
+    prompt = (project / "v1" / "prompt.md").read_text(encoding="utf-8")
+    assert "Loaded Data And References" in prompt
+    assert "sample from data.csv" in prompt
+    assert "sample from refs.md" in prompt
+
+    metadata = read_json(project / "v1" / "metadata.json")
+    assert "inputs/" in metadata["outputs"]
+    assert metadata["loaded_inputs"][0]["label"] == "data"
+    assert metadata["loaded_inputs"][0]["summary"]["loadedFiles"] == 1
+
+
 def test_llm_failure_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_urlopen(*args: object, **kwargs: object) -> None:
         raise urllib.error.URLError("network unavailable")
@@ -162,3 +206,62 @@ def test_duplicate_init_is_rejected(tmp_path: Path) -> None:
     assert main(args) == 0
     with pytest.raises(FileExistsError):
         main(args)
+
+
+def _write_fake_smart_loader(path: Path) -> Path:
+    script = f"""#!{sys.executable}
+import json
+import pathlib
+import sys
+
+input_path = pathlib.Path(sys.argv[1])
+text = input_path.read_text(encoding="utf-8")
+sample = f"sample from {{input_path.name}}: {{text.strip()}}"
+result = {{
+    "rootPath": str(input_path.parent),
+    "documents": [
+        {{
+            "id": input_path.stem,
+            "sourcePath": str(input_path),
+            "relativePath": input_path.name,
+            "format": "markdown",
+            "text": sample,
+            "markdown": sample,
+            "chunks": [],
+            "assets": [],
+            "warnings": [],
+            "metadata": {{"sizeBytes": input_path.stat().st_size, "loader": "fake"}},
+        }}
+    ],
+    "chunks": [
+        {{
+            "id": f"{{input_path.stem}}_chunk_1",
+            "documentId": input_path.stem,
+            "text": sample,
+            "markdown": sample,
+            "index": 0,
+            "metadata": {{
+                "sourcePath": str(input_path),
+                "relativePath": input_path.name,
+                "format": "markdown",
+                "tokenEstimate": 1,
+                "startChar": 0,
+                "endChar": len(sample),
+            }},
+        }}
+    ],
+    "errors": [],
+    "summary": {{
+        "discoveredFiles": 1,
+        "loadedFiles": 1,
+        "skippedFiles": 0,
+        "failedFiles": 0,
+        "chunks": 1,
+        "assets": 0,
+    }},
+}}
+sys.stdout.write(json.dumps(result))
+"""
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o755)
+    return path
