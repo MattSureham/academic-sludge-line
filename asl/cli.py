@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated reviewer personas",
     )
 
+    ui = sub.add_parser("ui", help="start the local web UI")
+    ui.add_argument("--host", default="127.0.0.1", help="host to bind")
+    ui.add_argument("--port", type=int, default=8765, help="port to bind")
+    ui.add_argument("--open", action="store_true", help="open the UI in the default browser")
+
     return parser
 
 
@@ -102,6 +107,12 @@ def main(argv: list[str] | None = None) -> int:
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
             print(path)
+        return 0
+
+    if args.command == "ui":
+        from .ui import run_ui
+
+        run_ui(host=args.host, port=args.port, open_browser=args.open)
         return 0
 
     parser.error("unknown command")

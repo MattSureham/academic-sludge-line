@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from asl.catalog import catalog_payload
 from asl.cli import main
 from asl.llm import LLMClient, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
@@ -227,6 +228,34 @@ def test_llm_client_tries_model_alternatives(monkeypatch: pytest.MonkeyPatch) ->
     assert result.text == "deepseek ok"
     assert "missing credentials" in result.attempts[0]
     assert urls == ["https://api.deepseek.com/v1/chat/completions"]
+
+
+def test_catalog_exposes_teamagents_provider_presets() -> None:
+    catalog = catalog_payload()
+    routes = {model["id"]: model["route"] for model in catalog["models"]}
+    providers = {provider["provider"]: provider for provider in catalog["providers"]}
+
+    assert routes["deepseek-reasoner"] == "deepseek:deepseek-reasoner"
+    assert routes["minimax-m2.7"] == "minimax:minimax-m2.7"
+    assert routes["vllm"].endswith("@http://127.0.0.1:8000/v1")
+    assert providers["openai-compat"]["requiresApiKey"] is False
+    assert providers["anthropic"]["apiKeyEnvs"] == ["ANTHROPIC_API_KEY"]
+
+
+def test_openai_compat_uses_teamagents_default_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    urls = []
+
+    def fake_urlopen(request: object, timeout: int) -> object:
+        urls.append(getattr(request, "full_url"))
+        return _JsonResponse({"choices": [{"message": {"content": "local ok"}}]})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = LLMClient(model_routes={"draft": "openai-compat:local-model"})
+
+    result = client.generate("prompt", "fallback", role="draft")
+
+    assert result.text == "local ok"
+    assert urls == ["http://127.0.0.1:8000/v1/chat/completions"]
 
 
 def test_pipeline_records_stage_model_routes(tmp_path: Path) -> None:

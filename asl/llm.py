@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Mapping
 
+from .catalog import PROVIDERS
 from .templates import SYSTEM_POLICY
 
 
@@ -49,7 +50,7 @@ class ModelRoutes:
     @classmethod
     def build(cls, default_model: str | None = None, routes: Mapping[str, str] | None = None) -> "ModelRoutes":
         raw: dict[str, str] = {}
-        default = default_model or os.getenv("ASL_MODEL") or "gpt-4.1-mini"
+        default = default_model or os.getenv("ASL_MODEL") or PROVIDERS["openai"].default_model
         raw[ROLE_DEFAULT] = default
         for role, value in (routes or {}).items():
             if role in MODEL_ROLES and value:
@@ -147,6 +148,8 @@ class LLMClient:
             return _call_gemini(spec, prompt)
         if spec.provider == "ollama":
             return _call_ollama(spec, prompt)
+        if spec.provider == "minimax":
+            return _call_minimax(spec, prompt)
         if spec.provider in {"deepseek", "qwen", "kimi", "kimi-code", "openai-compat"}:
             return _call_chat_completions(spec, prompt)
         raise ValueError(f"unsupported provider: {spec.provider}")
@@ -260,6 +263,23 @@ def _call_ollama(spec: ModelSpec, prompt: str) -> str:
     return body.get("message", {}).get("content", "").strip()
 
 
+def _call_minimax(spec: ModelSpec, prompt: str) -> str:
+    payload = {
+        "model": spec.model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_POLICY},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": 4096,
+    }
+    body = _post_json(
+        _endpoint_for(spec, "/text/chatcompletion_v2"),
+        payload,
+        {"Authorization": f"Bearer {_api_key_for(spec)}"},
+    )
+    return body["choices"][0]["message"]["content"].strip()
+
+
 def _extract_openai_responses_text(body: dict) -> str:
     if isinstance(body.get("output_text"), str):
         return body["output_text"]
@@ -296,18 +316,8 @@ def _endpoint_for(spec: ModelSpec, path: str) -> str:
 
 
 def _default_endpoint_for(provider: str) -> str:
-    defaults = {
-        "openai": "https://api.openai.com/v1",
-        "anthropic": "https://api.anthropic.com/v1",
-        "gemini": "https://generativelanguage.googleapis.com/v1beta",
-        "deepseek": "https://api.deepseek.com/v1",
-        "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        "kimi": "https://api.moonshot.ai/v1",
-        "kimi-code": "https://api.kimi.com/coding/v1",
-        "ollama": "http://127.0.0.1:11434",
-        "openai-compat": os.getenv("OPENAI_COMPAT_ENDPOINT", ""),
-    }
-    endpoint = defaults.get(provider, "")
+    entry = PROVIDERS.get(provider)
+    endpoint = entry.default_endpoint if entry else ""
     if not endpoint:
         raise ValueError(f"endpoint is required for provider: {provider}")
     return endpoint
@@ -325,17 +335,8 @@ def _api_key_for(spec: ModelSpec) -> str:
     if explicit:
         return explicit
 
-    env_names = {
-        "openai": ("OPENAI_API_KEY",),
-        "anthropic": ("ANTHROPIC_API_KEY",),
-        "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-        "deepseek": ("DEEPSEEK_API_KEY",),
-        "qwen": ("QWEN_API_KEY",),
-        "kimi": ("MOONSHOT_API_KEY", "KIMI_API_KEY"),
-        "kimi-code": ("KIMI_API_KEY",),
-        "openai-compat": ("OPENAI_COMPAT_API_KEY",),
-    }
-    for name in env_names.get(provider, ()):
+    entry = PROVIDERS.get(provider)
+    for name in entry.api_key_envs if entry else ():
         value = os.getenv(name, "")
         if value:
             return value
@@ -350,5 +351,5 @@ def _spec_available(spec: ModelSpec) -> bool:
     if spec.provider in {"offline", "template", "ollama"}:
         return True
     if spec.provider == "openai-compat":
-        return bool(spec.endpoint or _env_endpoint_for(spec.provider) or os.getenv("OPENAI_COMPAT_ENDPOINT", ""))
+        return bool(spec.endpoint or _env_endpoint_for(spec.provider) or _default_endpoint_for(spec.provider))
     return bool(_api_key_for(spec))

@@ -98,6 +98,25 @@ Loaded material is written under each version's `inputs/` folder and injected
 into the research plan and draft prompts. Set `ASL_SMART_LOADER` or pass
 `--smart-loader` if the loader lives somewhere other than `../smart-loader`.
 
+## Web UI
+
+Start the local UI:
+
+```bash
+asl ui
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+The UI can create paper workspaces, select models for each pipeline stage, add
+data/reference paths, run cycles, and preview generated outputs. It uses the same
+provider/model catalog as the CLI and defaults the local OpenAI-compatible vLLM
+preset to `http://127.0.0.1:8000/v1`.
+
 ## LLM Mode And Model Routing
 
 Offline mode is the default safest path for tests and demos. To use an LLM:
@@ -151,11 +170,18 @@ asl run papers/demo-policy-paper \
   --review-model ollama:llama3.1
 ```
 
+The provider catalog follows the adjacent teamagents setup. Presets include
+DeepSeek (`deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-pro`,
+`deepseek-v4-flash`), MiniMax (`minimax-m2.7`, `minimax-m2.5`,
+`minimax-m2.1`, `minimax-m1`, `abab6.5s-chat`), Qwen, Kimi, Kimi Code, vLLM,
+LM Studio, Ollama, OpenAI, Anthropic, and Gemini.
+
 Supported providers include `openai`, `anthropic`, `gemini`, `deepseek`,
-`qwen`, `kimi`, `kimi-code`, `openai-compat`, and `ollama`. API keys are read
-from the usual environment variables such as `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `DEEPSEEK_API_KEY`. Stage choices and
-actual models used are recorded in each version's `metadata.json`.
+`minimax`, `qwen`, `kimi`, `kimi-code`, `openai-compat`, and `ollama`. API keys
+are read from the usual environment variables such as `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`,
+`QWEN_API_KEY`, `MOONSHOT_API_KEY`, and `KIMI_API_KEY`. Stage choices and actual
+models used are recorded in each version's `metadata.json`.
 
 ## Design
 
