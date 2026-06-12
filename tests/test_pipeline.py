@@ -6,6 +6,7 @@ import pytest
 
 from asl.catalog import catalog_payload
 from asl.cli import main
+from asl.html_render import render_version_html
 from asl.llm import LLMClient, LLMResult, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
 from asl.templates import (
@@ -44,7 +45,13 @@ def test_pipeline_creates_versioned_outputs(tmp_path: Path) -> None:
 
     assert (project / "v1" / "draft.md").exists()
     assert (project / "v1" / "reviews" / "methods.md").exists()
+    assert (project / "v1" / "html" / "index.html").exists()
+    assert (project / "v1" / "html" / "draft.html").exists()
+    assert (project / "v1" / "html" / "reviews_methods.html").exists()
     assert (project / "v2" / "revision_plan.md").exists()
+    metadata = read_json(project / "v1" / "metadata.json")
+    assert "html/" in metadata["outputs"]
+    assert metadata["input_loader"]["settings"]["pdf_render_pages"] is True
 
 
 def test_offline_templates_dedent_multiline_inputs() -> None:
@@ -158,6 +165,26 @@ def test_smart_loader_context_is_loaded_for_data_and_references(tmp_path: Path) 
     assert "inputs/" in metadata["outputs"]
     assert metadata["loaded_inputs"][0]["label"] == "data"
     assert metadata["loaded_inputs"][0]["summary"]["loadedFiles"] == 1
+    assert (project / "v1" / "html" / "inputs_data.html").exists()
+    assert (project / "v1" / "html" / "inputs_references.html").exists()
+
+
+def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> None:
+    version = tmp_path / "v1"
+    reviews = version / "reviews"
+    assets = version / "inputs" / "assets" / "references" / "input-1"
+    reviews.mkdir(parents=True)
+    assets.mkdir(parents=True)
+    (version / "draft.md").write_text("# Draft\n\nText.", encoding="utf-8")
+    (reviews / "domain.md").write_text("# Domain Review\n\nLooks plausible.", encoding="utf-8")
+    (assets / "page-1.png").write_bytes(b"not a real png")
+    (version / "metadata.json").write_text('{"version": 1}', encoding="utf-8")
+
+    render_version_html(version)
+
+    assert (version / "html" / "reviews_domain.html").exists()
+    asset_html = (version / "html" / "assets.html").read_text(encoding="utf-8")
+    assert "../inputs/assets/references/input-1/page-1.png" in asset_html
 
 
 def test_llm_failure_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

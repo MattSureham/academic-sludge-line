@@ -8,6 +8,7 @@ from pathlib import Path
 from . import __version__
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, START_MODES, PaperPipeline, init_project
+from .smart_loader import SmartLoaderSettings
 from .workspace import read_text
 
 
@@ -69,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="path to smart-loader CLI, dist/cli.js, or repository",
     )
+    _add_loader_args(run)
     run.add_argument(
         "--reviewers",
         default=",".join(DEFAULT_REVIEWERS),
@@ -115,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             data_paths=tuple(args.data),
             reference_paths=tuple(args.references),
             smart_loader_path=args.smart_loader,
+            smart_loader_settings=_loader_settings_from_args(args),
             model_routes=_model_routes_from_args(args),
             start_mode=args.start_mode,
             seed_draft_path=args.seed_draft_file,
@@ -151,6 +154,14 @@ def _add_model_route_args(parser: argparse.ArgumentParser, persist: bool) -> Non
     parser.add_argument("--score-model", help=f"model route(s) for quality scoring ({scope})")
 
 
+def _add_loader_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--no-pdf-render-pages", action="store_true", help="disable PDF page image extraction")
+    parser.add_argument("--pdf-max-pages", type=int, default=25, help="maximum PDF pages to render as images")
+    parser.add_argument("--pdf-dpi", type=int, default=180, help="DPI for rendered PDF page images")
+    parser.add_argument("--no-ocr-assets", action="store_true", help="disable OCR for extracted images when tesseract is available")
+    parser.add_argument("--ocr-language", default="eng", help="tesseract OCR language")
+
+
 def _model_routes_from_args(args: argparse.Namespace) -> dict[str, str]:
     routes = {}
     if getattr(args, "model", None):
@@ -160,6 +171,16 @@ def _model_routes_from_args(args: argparse.Namespace) -> dict[str, str]:
         if value:
             routes[role] = value
     return routes
+
+
+def _loader_settings_from_args(args: argparse.Namespace) -> SmartLoaderSettings:
+    return SmartLoaderSettings(
+        pdf_render_pages=not getattr(args, "no_pdf_render_pages", False),
+        pdf_max_pages=getattr(args, "pdf_max_pages", 25),
+        pdf_dpi=getattr(args, "pdf_dpi", 180),
+        ocr_assets=not getattr(args, "no_ocr_assets", False),
+        ocr_language=getattr(args, "ocr_language", "eng"),
+    )
 
 
 if __name__ == "__main__":

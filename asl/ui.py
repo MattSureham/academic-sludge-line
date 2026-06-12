@@ -15,6 +15,7 @@ from . import __version__
 from .catalog import catalog_payload
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, PaperPipeline, init_project
+from .smart_loader import SmartLoaderSettings
 from .workspace import read_json, read_text
 
 
@@ -133,6 +134,7 @@ def _run_project(payload: dict, cwd: Path) -> dict:
         data_paths=tuple(Path(path) for path in _split_paths(payload.get("data"))),
         reference_paths=tuple(Path(path) for path in _split_paths(payload.get("references"))),
         smart_loader_path=Path(payload["smartLoader"]) if payload.get("smartLoader") else None,
+        smart_loader_settings=_loader_settings(payload.get("loader", {})),
         model_routes=_model_routes(payload.get("models", {})),
         start_mode=payload.get("startMode") or None,
         seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
@@ -188,7 +190,11 @@ def _version_payload(version_dir: Path) -> dict:
     if reviews_dir.exists():
         for review in sorted(reviews_dir.glob("*.md")):
             files[f"reviews/{review.name}"] = _preview(review)
-    return {"path": str(version_dir), "files": files}
+    payload = {"path": str(version_dir), "files": files}
+    html_index = version_dir / "html" / "index.html"
+    if html_index.exists():
+        payload["htmlIndex"] = str(html_index)
+    return payload
 
 
 def _preview(path: Path, limit: int = 12_000) -> str:
@@ -241,11 +247,41 @@ def _model_routes(models: dict) -> dict[str, str]:
     routes = {}
     if not isinstance(models, dict):
         return routes
-    for role in ("default", "plan", "draft", "review", "revision"):
+    for role in ("default", "plan", "draft", "review", "revision", "score"):
         value = str(models.get(role, "")).strip()
         if value:
             routes[role] = value
     return routes
+
+
+def _loader_settings(loader: object) -> SmartLoaderSettings:
+    if not isinstance(loader, dict):
+        loader = {}
+    return SmartLoaderSettings(
+        pdf_render_pages=_bool_setting(loader.get("pdfRenderPages"), True),
+        pdf_max_pages=_int_setting(loader.get("pdfMaxPages"), 25),
+        pdf_dpi=_int_setting(loader.get("pdfDpi"), 180),
+        ocr_assets=_bool_setting(loader.get("ocrAssets"), True),
+        ocr_language=str(loader.get("ocrLanguage") or "eng").strip() or "eng",
+    )
+
+
+def _bool_setting(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
+
+def _int_setting(value: object, default: int) -> int:
+    try:
+        parsed = int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)
 
 
 def _split_paths(value: object) -> list[str]:
@@ -332,6 +368,27 @@ _INDEX_HTML = """<!doctype html>
         <label>smart-loader
           <input id="smartLoader" placeholder="../smart-loader">
         </label>
+        <div class="loader-options">
+          <label class="checkline">
+            <input id="pdfRenderPages" type="checkbox" checked>
+            Render PDF pages
+          </label>
+          <label class="checkline">
+            <input id="ocrAssets" type="checkbox" checked>
+            OCR extracted images
+          </label>
+          <div class="inline-fields">
+            <label>PDF max pages
+              <input id="pdfMaxPages" type="number" min="1" value="25">
+            </label>
+            <label>PDF DPI
+              <input id="pdfDpi" type="number" min="72" value="180">
+            </label>
+          </div>
+          <label>OCR language
+            <input id="ocrLanguage" value="eng">
+          </label>
+        </div>
         <button class="primary" type="submit">Run</button>
       </form>
 
@@ -575,6 +632,18 @@ textarea {
   margin-top: 6px;
 }
 
+.loader-options {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fbfcf9;
+  margin: 12px 0;
+}
+
+.loader-options .checkline {
+  margin: 8px 0;
+}
+
 .output-head {
   display: flex;
   justify-content: space-between;
@@ -740,12 +809,14 @@ function renderProject(project) {
   const manifest = project.manifest || {};
   const latest = project.latest || {};
   state.latestFiles = latest.files || {};
-    $("projectSummary").innerHTML = `
+  const htmlLine = latest.htmlIndex ? `<div>HTML: <code>${latest.htmlIndex}</code></div>` : "";
+  $("projectSummary").innerHTML = `
     <div><strong>${manifest.title || "Untitled"}</strong></div>
     <div>${manifest.topic || ""}</div>
     <div>${project.path}</div>
     <div>${project.versions.length} version(s)</div>
     <div>Accepted: ${project.acceptedVersion || "none yet"}</div>
+    ${htmlLine}
   `;
   renderFileTabs();
 }
@@ -832,6 +903,13 @@ async function runProject(event) {
     data: $("runData").value,
     references: $("runReferences").value,
     smartLoader: $("smartLoader").value,
+    loader: {
+      pdfRenderPages: $("pdfRenderPages").checked,
+      pdfMaxPages: $("pdfMaxPages").value,
+      pdfDpi: $("pdfDpi").value,
+      ocrAssets: $("ocrAssets").checked,
+      ocrLanguage: $("ocrLanguage").value,
+    },
     models: collectRoutes("runModelRoutes"),
   };
   const result = await api("/api/run", { method: "POST", body: JSON.stringify(payload) });

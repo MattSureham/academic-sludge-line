@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict
 from pathlib import Path
 
+from .html_render import render_version_html
 from .llm import LLMClient
 from .smart_loader import (
     LoadedInputGroup,
+    SmartLoaderSettings,
     append_context_to_brief,
     load_input_groups,
     resolve_input_paths,
@@ -105,6 +108,7 @@ class PaperPipeline:
         data_paths: tuple[Path, ...] = (),
         reference_paths: tuple[Path, ...] = (),
         smart_loader_path: Path | None = None,
+        smart_loader_settings: SmartLoaderSettings | None = None,
         model_routes: dict[str, str] | None = None,
         start_mode: str | None = None,
         seed_draft_path: Path | None = None,
@@ -144,6 +148,7 @@ class PaperPipeline:
             ]
         )
         self.smart_loader_path = smart_loader_path
+        self.smart_loader_settings = smart_loader_settings or SmartLoaderSettings()
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
@@ -219,40 +224,44 @@ class PaperPipeline:
         if quality_gate["accepted"]:
             write_accepted_version(self.project_dir, version_dir)
 
-        write_json(
-            version_dir / "metadata.json",
-            {
-                "schema": "academic-sludge-line.version.v1",
-                "version": version,
-                "created_at": utc_now(),
-                "previous_version": previous_dir.name if previous_dir else None,
-                "previous_accepted_version": previous_dir.name if previous_dir else None,
-                "start_mode": self.start_mode,
-                "accepted": quality_gate["accepted"],
-                "quality_gate": quality_gate,
-                "provider": draft.provider,
-                "model": draft.model,
-                "reviewers": list(reviewers),
-                "models": {
-                    "requested": _route_metadata(self.client),
-                    "used": {
-                        "plan": _result_metadata(plan),
-                        "draft": _result_metadata(draft),
-                        "reviews": review_models,
-                        "revision": _result_metadata(revision),
-                    },
+        metadata = {
+            "schema": "academic-sludge-line.version.v1",
+            "version": version,
+            "created_at": utc_now(),
+            "previous_version": previous_dir.name if previous_dir else None,
+            "previous_accepted_version": previous_dir.name if previous_dir else None,
+            "start_mode": self.start_mode,
+            "accepted": quality_gate["accepted"],
+            "quality_gate": quality_gate,
+            "provider": draft.provider,
+            "model": draft.model,
+            "reviewers": list(reviewers),
+            "models": {
+                "requested": _route_metadata(self.client),
+                "used": {
+                    "plan": _result_metadata(plan),
+                    "draft": _result_metadata(draft),
+                    "reviews": review_models,
+                    "revision": _result_metadata(revision),
                 },
-                "loaded_inputs": [group.metadata() for group in loaded_inputs],
-                "outputs": [
-                    "prompt.md",
-                    *(["inputs/"] if loaded_inputs else []),
-                    "research_plan.md",
-                    "draft.md",
-                    "reviews/",
-                    "revision_plan.md",
-                ],
             },
-        )
+            "input_loader": {
+                "smart_loader": str(self.smart_loader_path) if self.smart_loader_path else None,
+                "settings": asdict(self.smart_loader_settings),
+            },
+            "loaded_inputs": [group.metadata() for group in loaded_inputs],
+            "outputs": [
+                "prompt.md",
+                *(["inputs/"] if loaded_inputs else []),
+                "research_plan.md",
+                "draft.md",
+                "reviews/",
+                "revision_plan.md",
+                "html/",
+            ],
+        }
+        write_json(version_dir / "metadata.json", metadata)
+        render_version_html(version_dir)
         return version_dir
 
     def _load_inputs(self, version_dir: Path) -> list[LoadedInputGroup]:
@@ -261,6 +270,7 @@ class PaperPipeline:
             self.reference_paths,
             version_dir / "inputs",
             cli_path=self.smart_loader_path,
+            settings=self.smart_loader_settings,
         )
         if not groups:
             return []

@@ -13,6 +13,7 @@ TODO, refuses fake citations, and separates drafts from verified research.
 - Supports an offline template mode that runs with no dependencies.
 - Optionally calls an LLM when `OPENAI_API_KEY` is available.
 - Loads optional data and reference files through `smart-loader` when paths are provided.
+- Writes static HTML views for every generated version.
 - Keeps a `sources.json` placeholder so claims can be audited later.
 
 ## Install
@@ -63,6 +64,10 @@ papers/demo-policy-paper/
     draft.md
     reviews/
     revision_plan.md
+    html/
+      index.html
+      draft.html
+      ...
     metadata.json
   v2/
     ...
@@ -97,6 +102,35 @@ asl run papers/demo-policy-paper \
 Loaded material is written under each version's `inputs/` folder and injected
 into the research plan and draft prompts. Set `ASL_SMART_LOADER` or pass
 `--smart-loader` if the loader lives somewhere other than `../smart-loader`.
+
+The loader accepts files or folders and supports Markdown, text, CSV, JSON,
+HTML, PDF, DOCX, and legacy DOC through the adjacent `smart-loader` project.
+PDF text is extracted directly when possible. For scanned or image-heavy PDFs,
+ASL asks `smart-loader` to render PDF pages into image assets, then optionally
+runs OCR over extracted image assets when `tesseract` is installed. DOCX files
+are converted to Markdown and embedded images are extracted into the version's
+`inputs/assets/` folder.
+
+Useful loader options:
+
+```bash
+asl run papers/demo-policy-paper \
+  --data data/ \
+  --references references/ \
+  --pdf-max-pages 40 \
+  --pdf-dpi 220 \
+  --ocr-language eng \
+  --offline
+```
+
+Use `--no-pdf-render-pages` to skip PDF page images, or `--no-ocr-assets` to
+skip local OCR. Missing Poppler (`pdftoppm`) or `tesseract` is recorded as a
+warning in the generated input Markdown rather than silently ignored.
+
+Every version also gets a static HTML bundle under `vN/html/`. Open
+`vN/html/index.html` to read the prompt record, loaded inputs, draft, reviews,
+revision plan, quality scores, metadata, and extracted image assets in a
+browser-friendly format.
 
 ## Web UI
 

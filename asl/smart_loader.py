@@ -15,6 +15,15 @@ PROMPT_CONTEXT_LIMIT = 24_000
 
 
 @dataclass(frozen=True)
+class SmartLoaderSettings:
+    pdf_render_pages: bool = True
+    pdf_max_pages: int = 25
+    pdf_dpi: int = 180
+    ocr_assets: bool = True
+    ocr_language: str = "eng"
+
+
+@dataclass(frozen=True)
 class LoadedInputGroup:
     label: str
     paths: tuple[Path, ...]
@@ -64,8 +73,9 @@ class LoadedInputGroup:
 class SmartLoader:
     """Small subprocess wrapper around smart-loader's JSON CLI output."""
 
-    def __init__(self, cli_path: Path | None = None) -> None:
+    def __init__(self, cli_path: Path | None = None, settings: SmartLoaderSettings | None = None) -> None:
         self.cli_path = _resolve_cli(cli_path)
+        self.settings = settings or SmartLoaderSettings()
 
     def load_group(self, label: str, paths: Iterable[Path], output_dir: Path) -> LoadedInputGroup:
         normalized_paths = tuple(_unique_paths(paths))
@@ -77,6 +87,8 @@ class SmartLoader:
         for index, input_path in enumerate(normalized_paths, start=1):
             asset_dir = output_dir / "assets" / label / f"input-{index}"
             results.append(self._load_path(input_path, asset_dir))
+        if self.settings.ocr_assets:
+            _annotate_results_with_ocr(results, self.settings.ocr_language)
 
         return LoadedInputGroup(
             label=label,
@@ -94,6 +106,16 @@ class SmartLoader:
             "--asset-dir",
             str(asset_dir),
         ]
+        if self.settings.pdf_render_pages:
+            command.extend(
+                [
+                    "--pdf-render-pages",
+                    "--pdf-max-pages",
+                    str(self.settings.pdf_max_pages),
+                    "--pdf-dpi",
+                    str(self.settings.pdf_dpi),
+                ]
+            )
         completed = subprocess.run(
             command,
             check=False,
@@ -120,13 +142,14 @@ def load_input_groups(
     reference_paths: Iterable[Path],
     output_dir: Path,
     cli_path: Path | None = None,
+    settings: SmartLoaderSettings | None = None,
 ) -> list[LoadedInputGroup]:
     data = tuple(_unique_paths(data_paths))
     references = tuple(_unique_paths(reference_paths))
     if not data and not references:
         return []
 
-    loader = SmartLoader(cli_path)
+    loader = SmartLoader(cli_path, settings=settings)
     groups = [
         loader.load_group("data", data, output_dir),
         loader.load_group("references", references, output_dir),
@@ -262,6 +285,19 @@ def _render_group_markdown(label: str, paths: tuple[Path, ...], results: list[di
                 for warning in warnings:
                     sections.append(f"- {warning}")
                 sections.append("")
+            assets = document.get("assets", [])
+            if assets:
+                sections.append("Extracted assets:")
+                for asset in assets:
+                    if not isinstance(asset, dict):
+                        continue
+                    label_text = asset.get("originalName") or Path(str(asset.get("filePath", "asset"))).name
+                    asset_kind = asset.get("kind", "asset")
+                    sections.append(f"- {label_text} ({asset_kind}): {asset.get('filePath', '')}")
+                    ocr_text = asset.get("ocrText")
+                    if ocr_text:
+                        sections.append(f"  OCR: {_clip(str(ocr_text), 2000)}")
+                sections.append("")
             markdown = str(document.get("markdown") or document.get("text") or "").strip()
             sections.extend([_clip(markdown, 10_000), ""])
 
@@ -293,6 +329,51 @@ def _collect_errors(results: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
             if isinstance(error, dict):
                 errors.append(error)
     return errors
+
+
+def _annotate_results_with_ocr(results: list[dict[str, Any]], language: str) -> None:
+    executable = shutil.which("tesseract")
+    if not executable:
+        _append_loader_warning_if_assets(results, "OCR requested for extracted images, but tesseract was not found.")
+        return
+
+    for result in results:
+        for document in result.get("documents", []):
+            if not isinstance(document, dict):
+                continue
+            for asset in document.get("assets", []):
+                if not isinstance(asset, dict):
+                    continue
+                mime_type = str(asset.get("mimeType", ""))
+                if not mime_type.startswith("image/"):
+                    continue
+                file_path = Path(str(asset.get("filePath", "")))
+                if not file_path.exists():
+                    continue
+                completed = subprocess.run(
+                    [executable, str(file_path), "stdout", "-l", language],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if completed.returncode == 0 and completed.stdout.strip():
+                    asset["ocrText"] = completed.stdout.strip()
+                elif completed.stderr.strip():
+                    warnings = document.setdefault("warnings", [])
+                    warnings.append(f"OCR failed for {file_path.name}: {completed.stderr.strip()}")
+
+
+def _append_loader_warning_if_assets(results: list[dict[str, Any]], warning: str) -> None:
+    for result in results:
+        for document in result.get("documents", []):
+            if isinstance(document, dict):
+                has_image_asset = any(
+                    isinstance(asset, dict) and str(asset.get("mimeType", "")).startswith("image/")
+                    for asset in document.get("assets", [])
+                )
+                if has_image_asset:
+                    document.setdefault("warnings", []).append(warning)
 
 
 def _clip(text: str, limit: int) -> str:
