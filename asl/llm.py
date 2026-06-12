@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 from .catalog import PROVIDERS
+from .local_providers import cc_switch_settings_for_ref
 from .templates import SYSTEM_POLICY
 
 
@@ -21,6 +26,18 @@ ROLE_REVISION = "revision"
 ROLE_SCORE = "score"
 
 MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION, ROLE_SCORE)
+LOCAL_AGENT_TIMEOUT_SECONDS = int(os.getenv("ASL_LOCAL_AGENT_TIMEOUT", "300"))
+LOCAL_AGENT_DEFAULT_MODEL_NAMES = {"", "default", "configured", "local"}
+_GENERATION_ERRORS = (
+    urllib.error.URLError,
+    TimeoutError,
+    json.JSONDecodeError,
+    KeyError,
+    TypeError,
+    ValueError,
+    OSError,
+    subprocess.TimeoutExpired,
+)
 
 
 @dataclass(frozen=True)
@@ -117,7 +134,7 @@ class LLMClient:
 
             try:
                 text = self._generate_with_spec(spec, prompt)
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            except _GENERATION_ERRORS as exc:
                 attempts.append(f"{spec.label}: {type(exc).__name__}: {exc}")
                 continue
 
@@ -158,7 +175,7 @@ class LLMClient:
 
         try:
             text = self._generate_with_spec(spec, prompt)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        except _GENERATION_ERRORS as exc:
             attempt = f"{spec.label}: {type(exc).__name__}: {exc}"
             note = f"\n\n<!-- LLM call failed; offline fallback used: {attempt} -->"
             return LLMResult(
@@ -192,6 +209,10 @@ class LLMClient:
             return _call_minimax(spec, prompt)
         if spec.provider in {"deepseek", "qwen", "kimi", "kimi-code", "openai-compat"}:
             return _call_chat_completions(spec, prompt)
+        if spec.provider == "claude-code":
+            return _call_claude_code(spec, prompt)
+        if spec.provider == "codex":
+            return _call_codex_cli(spec, prompt)
         raise ValueError(f"unsupported provider: {spec.provider}")
 
 
@@ -320,6 +341,99 @@ def _call_minimax(spec: ModelSpec, prompt: str) -> str:
     return body["choices"][0]["message"]["content"].strip()
 
 
+def _call_claude_code(spec: ModelSpec, prompt: str) -> str:
+    command = os.getenv("ASL_CLAUDE_CODE_COMMAND", "claude")
+    args = [
+        command,
+        "-p",
+        "--output-format",
+        "text",
+        "--no-session-persistence",
+        "--tools",
+        "",
+    ]
+    if spec.model not in LOCAL_AGENT_DEFAULT_MODEL_NAMES:
+        args.extend(["--model", spec.model])
+
+    settings = cc_switch_settings_for_ref(spec.endpoint)
+    if settings:
+        args.extend(["--settings", json.dumps(settings)])
+
+    completed = subprocess.run(
+        args,
+        input=_agent_prompt(prompt),
+        capture_output=True,
+        text=True,
+        timeout=LOCAL_AGENT_TIMEOUT_SECONDS,
+        cwd=Path.cwd(),
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ValueError(_subprocess_error("claude-code", completed))
+    return completed.stdout.strip()
+
+
+def _call_codex_cli(spec: ModelSpec, prompt: str) -> str:
+    command = os.getenv("ASL_CODEX_COMMAND", "codex")
+    output_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="asl-codex-", suffix=".txt", delete=False) as output:
+            output_path = Path(output.name)
+
+        args = [
+            command,
+            "exec",
+            "--cd",
+            str(Path.cwd()),
+            "--sandbox",
+            "read-only",
+            "--ask-for-approval",
+            "never",
+            "--skip-git-repo-check",
+            "--color",
+            "never",
+            "--output-last-message",
+            str(output_path),
+        ]
+        if spec.endpoint and not spec.endpoint.startswith("cc-switch:"):
+            args.extend(["--profile", spec.endpoint])
+        if spec.model not in LOCAL_AGENT_DEFAULT_MODEL_NAMES:
+            args.extend(["--model", spec.model])
+        args.append("-")
+
+        completed = subprocess.run(
+            args,
+            input=_agent_prompt(prompt),
+            capture_output=True,
+            text=True,
+            timeout=LOCAL_AGENT_TIMEOUT_SECONDS,
+            cwd=Path.cwd(),
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise ValueError(_subprocess_error("codex", completed))
+
+        if output_path.exists():
+            output_text = output_path.read_text(encoding="utf-8").strip()
+            if output_text:
+                return output_text
+        return completed.stdout.strip()
+    finally:
+        if output_path and output_path.exists():
+            output_path.unlink()
+
+
+def _agent_prompt(prompt: str) -> str:
+    return f"{SYSTEM_POLICY}\n\n{prompt}"
+
+
+def _subprocess_error(provider: str, completed: subprocess.CompletedProcess[str]) -> str:
+    stderr = (completed.stderr or "").strip()
+    stdout = (completed.stdout or "").strip()
+    detail = stderr or stdout or f"exit code {completed.returncode}"
+    return f"{provider} failed: {detail[:1000]}"
+
+
 def _extract_openai_responses_text(body: dict) -> str:
     if isinstance(body.get("output_text"), str):
         return body["output_text"]
@@ -390,6 +504,10 @@ def _provider_env_prefix(provider: str) -> str:
 def _spec_available(spec: ModelSpec) -> bool:
     if spec.provider in {"offline", "template", "ollama"}:
         return True
+    if spec.provider == "claude-code":
+        return bool(shutil.which(os.getenv("ASL_CLAUDE_CODE_COMMAND", "claude")))
+    if spec.provider == "codex":
+        return bool(shutil.which(os.getenv("ASL_CODEX_COMMAND", "codex")))
     if spec.provider == "openai-compat":
         return bool(spec.endpoint or _env_endpoint_for(spec.provider) or _default_endpoint_for(spec.provider))
     return bool(_api_key_for(spec))

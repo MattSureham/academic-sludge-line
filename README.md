@@ -263,11 +263,41 @@ DeepSeek (`deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-pro`,
 LM Studio, Ollama, OpenAI, Anthropic, and Gemini.
 
 Supported providers include `openai`, `anthropic`, `gemini`, `deepseek`,
-`minimax`, `qwen`, `kimi`, `kimi-code`, `openai-compat`, and `ollama`. API keys
-are read from the usual environment variables such as `OPENAI_API_KEY`,
+`minimax`, `qwen`, `kimi`, `kimi-code`, `openai-compat`, `ollama`,
+`claude-code`, and `codex`. API keys are read from the usual environment variables such as `OPENAI_API_KEY`,
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`,
 `QWEN_API_KEY`, `MOONSHOT_API_KEY`, and `KIMI_API_KEY`. Stage choices and actual
 models used are recorded in each version's `metadata.json`.
+
+Local CLI providers use your already configured tools:
+
+```bash
+asl run papers/demo-policy-paper \
+  --draft-model claude-code:default \
+  --review-model codex:default
+```
+
+`claude-code:<model>` calls the local `claude` CLI in print mode. `codex:<model>`
+calls `codex exec` with a read-only sandbox and writes the agent's final message
+back into the pipeline. Use `default` to let the local CLI choose its configured
+model, or pass an explicit model:
+
+```bash
+asl run papers/demo-policy-paper \
+  --draft-model claude-code:sonnet \
+  --review-model codex:gpt-5.5
+```
+
+ASL also discovers cc-switch Claude providers from `~/.cc-switch/cc-switch.db`
+and common `.cc-switch` JSON config paths. Those appear as routes like:
+
+```text
+claude-code:deepseek-v4-pro@cc-switch:deepseek
+```
+
+When such a route is used, ASL passes that cc-switch profile to Claude Code via a
+temporary settings payload. Secrets are not written to paper metadata or the UI
+catalog. Codex still uses its own local Codex CLI configuration.
 
 ## Design
 

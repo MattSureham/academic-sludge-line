@@ -1,12 +1,16 @@
 import sys
+import subprocess
+import sqlite3
 import urllib.error
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
 from asl.catalog import catalog_payload
 from asl.cli import main
 from asl.html_render import render_version_html
+from asl.local_providers import cc_switch_settings_for_ref
 from asl.llm import LLMClient, LLMResult, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
 from asl.templates import (
@@ -283,6 +287,141 @@ def test_openai_compat_uses_teamagents_default_endpoint(monkeypatch: pytest.Monk
 
     assert result.text == "local ok"
     assert urls == ["http://127.0.0.1:8000/v1/chat/completions"]
+
+
+def test_catalog_exposes_local_agent_and_cc_switch_presets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cc_switch = tmp_path / "cc-switch.json"
+    cc_switch.write_text(
+        """
+        {
+          "providers": {
+            "deepseek": {
+              "name": "DeepSeek Anthropic",
+              "env": {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "fake-token",
+                "ANTHROPIC_MODEL": "deepseek-v4-pro"
+              }
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ASL_CC_SWITCH_CONFIG", str(cc_switch))
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-test")
+    monkeypatch.setenv("CODEX_MODEL", "gpt-test")
+
+    def fake_which(command: str) -> Optional[str]:
+        return f"/usr/bin/{command}" if command in {"claude", "codex"} else None
+
+    monkeypatch.setattr("asl.local_providers.shutil.which", fake_which)
+    catalog = catalog_payload()
+    routes = {model["id"]: model["route"] for model in catalog["models"]}
+    providers = {provider["provider"]: provider for provider in catalog["providers"]}
+
+    assert routes["claude-code-local"] == "claude-code:claude-sonnet-test"
+    assert routes["codex-local"] == "codex:gpt-test"
+    assert routes["cc-switch-deepseek"] == "claude-code:deepseek-v4-pro@cc-switch:deepseek"
+    assert providers["claude-code"]["configured"] is True
+    assert providers["codex"]["configured"] is True
+
+    settings = cc_switch_settings_for_ref("cc-switch:deepseek", cwd=tmp_path)
+    assert settings and settings["env"]["ANTHROPIC_MODEL"] == "deepseek-v4-pro"
+
+
+def test_cc_switch_sqlite_profiles_are_discovered(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "cc-switch.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE providers (
+            id TEXT NOT NULL,
+            app_type TEXT NOT NULL,
+            name TEXT NOT NULL,
+            settings_config TEXT NOT NULL,
+            sort_index INTEGER
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO providers (id, app_type, name, settings_config, sort_index) VALUES (?, ?, ?, ?, ?)",
+        (
+            "deepseek-id",
+            "claude",
+            "DeepSeek",
+            '{"env":{"ANTHROPIC_MODEL":"deepseek-v4-pro","ANTHROPIC_AUTH_TOKEN":"fake-token"}}',
+            1,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.delenv("ASL_CC_SWITCH_CONFIG", raising=False)
+    monkeypatch.setenv("ASL_CC_SWITCH_DB", str(db_path))
+    monkeypatch.setattr("asl.local_providers.shutil.which", lambda command: "/usr/bin/claude")
+
+    catalog = catalog_payload()
+    routes = {model["id"]: model["route"] for model in catalog["models"]}
+
+    assert routes["cc-switch-deepseek"] == "claude-code:deepseek-v4-pro@cc-switch:deepseek"
+
+
+def test_llm_client_calls_claude_code_with_cc_switch_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cc_switch = tmp_path / "cc-switch.json"
+    cc_switch.write_text(
+        '{"providers":{"deepseek":{"env":{"ANTHROPIC_MODEL":"deepseek-v4-pro","ANTHROPIC_AUTH_TOKEN":"fake-token"}}}}',
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setenv("ASL_CC_SWITCH_CONFIG", str(cc_switch))
+    monkeypatch.setattr("asl.llm.shutil.which", lambda command: "/usr/bin/claude" if command == "claude" else None)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="claude draft\n", stderr="")
+
+    monkeypatch.setattr("asl.llm.subprocess.run", fake_run)
+    client = LLMClient(model_routes={"draft": "claude-code:deepseek-v4-pro@cc-switch:deepseek"})
+
+    result = client.generate("Draft this.", "fallback", role="draft")
+
+    assert result.text == "claude draft"
+    command = calls[0][0][0]
+    assert command[:2] == ["claude", "-p"]
+    assert "--settings" in command
+    settings = command[command.index("--settings") + 1]
+    assert "fake-token" in settings
+    assert calls[0][1]["input"].startswith("You are assisting with transparent academic drafting")
+
+
+def test_llm_client_reads_codex_exec_last_message(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = []
+    monkeypatch.setattr("asl.llm.shutil.which", lambda command: "/usr/bin/codex" if command == "codex" else None)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        calls.append((command, kwargs))
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("codex draft\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("asl.llm.subprocess.run", fake_run)
+    client = LLMClient(model_routes={"draft": "codex:gpt-test"})
+
+    result = client.generate("Draft this.", "fallback", role="draft")
+
+    assert result.text == "codex draft"
+    command = calls[0][0]
+    assert command[:2] == ["codex", "exec"]
+    assert "--model" in command
+    assert "gpt-test" in command
+    assert calls[0][1]["input"].startswith("You are assisting with transparent academic drafting")
 
 
 def test_pipeline_records_stage_model_routes(tmp_path: Path) -> None:

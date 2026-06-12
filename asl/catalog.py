@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .local_providers import discover_local_model_presets, local_cli_configured
+
 
 @dataclass(frozen=True)
 class ProviderCatalogEntry:
@@ -112,6 +114,22 @@ PROVIDERS: dict[str, ProviderCatalogEntry] = {
         requires_api_key=True,
         api_key_envs=("KIMI_API_KEY",),
     ),
+    "claude-code": ProviderCatalogEntry(
+        provider="claude-code",
+        name="Claude Code CLI (Local)",
+        default_model="default",
+        default_endpoint=None,
+        requires_api_key=False,
+        api_key_envs=(),
+    ),
+    "codex": ProviderCatalogEntry(
+        provider="codex",
+        name="Codex CLI (Local)",
+        default_model="default",
+        default_endpoint=None,
+        requires_api_key=False,
+        api_key_envs=(),
+    ),
 }
 
 
@@ -154,10 +172,13 @@ MODEL_PRESETS: tuple[ModelPreset, ...] = (
         os.getenv("LMSTUDIO_ENDPOINT", "http://127.0.0.1:1234/v1"),
     ),
     ModelPreset("ollama", "Ollama Mistral", "ollama", "mistral", ("local", "general")),
+    ModelPreset("claude-code-default", "Claude Code", "claude-code", "default", ("local", "writing", "review", "agent")),
+    ModelPreset("codex-default", "Codex CLI", "codex", "default", ("local", "writing", "review", "agent")),
 )
 
 
 def catalog_payload() -> dict:
+    model_presets = _catalog_model_presets()
     return {
         "providers": [
             {
@@ -181,7 +202,7 @@ def catalog_payload() -> dict:
                 "route": preset.route,
                 "capabilities": list(preset.capabilities),
             }
-            for preset in MODEL_PRESETS
+            for preset in model_presets
         ],
         "roles": [
             {"id": "plan", "name": "Research plan"},
@@ -194,6 +215,8 @@ def catalog_payload() -> dict:
 
 
 def provider_configured(provider: str) -> bool:
+    if provider in {"claude-code", "codex"}:
+        return local_cli_configured(provider)
     entry = PROVIDERS.get(provider)
     if not entry:
         return False
@@ -203,3 +226,28 @@ def provider_configured(provider: str) -> bool:
     if os.getenv(f"ASL_{provider_prefix}_API_KEY"):
         return True
     return any(os.getenv(env_name) for env_name in entry.api_key_envs)
+
+
+def _catalog_model_presets() -> tuple[ModelPreset, ...]:
+    presets = list(MODEL_PRESETS)
+    for local in discover_local_model_presets():
+        presets.append(
+            ModelPreset(
+                id=local.id,
+                name=local.name,
+                provider=local.provider,
+                model=local.model,
+                capabilities=local.capabilities,
+                endpoint=local.endpoint,
+            )
+        )
+
+    seen: set[str] = set()
+    unique: list[ModelPreset] = []
+    for preset in presets:
+        key = preset.route
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(preset)
+    return tuple(unique)
