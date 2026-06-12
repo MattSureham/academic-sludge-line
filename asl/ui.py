@@ -536,25 +536,32 @@ _INDEX_HTML = """<!doctype html>
   </main>
 
   <div id="browserModal" class="modal" hidden>
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="browserTitle">
+    <div class="modal-panel path-browser-panel" role="dialog" aria-modal="true" aria-labelledby="browserTitle">
       <div class="modal-head">
         <h2 id="browserTitle">Browse</h2>
-        <button id="browserClose" type="button">Close</button>
+        <button id="browserClose" class="quiet-button" type="button">Close</button>
       </div>
-      <div class="browser-toolbar">
+      <div class="browser-path-row">
+        <button id="browserBack" class="nav-button" type="button" title="Back" aria-label="Back">&lt;</button>
+        <button id="browserForward" class="nav-button" type="button" title="Forward" aria-label="Forward">&gt;</button>
+        <button id="browserUp" class="nav-button wide" type="button" title="Parent folder">Up</button>
+        <input id="browserPath" class="browser-path" autocomplete="off" aria-label="Current path">
+      </div>
+      <div class="browser-shortcuts">
         <button id="browserHome" type="button">Home</button>
         <button id="browserWorkspace" type="button">Workspace</button>
-        <button id="browserBack" type="button">Back</button>
-        <button id="browserForward" type="button">Forward</button>
-        <button id="browserUp" type="button">Parent</button>
-        <button id="browserUseCurrent" type="button">Use Current</button>
-      </div>
-      <input id="browserPath" class="browser-path" autocomplete="off">
-      <div class="mkdir-row">
-        <input id="newFolderName" placeholder="New folder">
-        <button id="createFolderBtn" type="button">Create</button>
       </div>
       <div id="browserEntries" class="browser-entries"></div>
+      <div class="browser-footer">
+        <div class="mkdir-row">
+          <input id="newFolderName" placeholder="New folder">
+          <button id="createFolderBtn" type="button">Create</button>
+        </div>
+        <div class="browser-actions">
+          <button id="browserCancel" type="button">Cancel</button>
+          <button id="browserUseCurrent" class="browser-primary" type="button">Choose Current</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -655,6 +662,10 @@ button {
 }
 
 button:hover { border-color: var(--accent); }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 
 .primary {
   width: 100%;
@@ -841,7 +852,7 @@ textarea {
   max-height: min(760px, calc(100vh - 36px));
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   gap: 10px;
   background: #fff;
   border: 1px solid var(--line);
@@ -850,7 +861,13 @@ textarea {
   box-shadow: 0 24px 80px rgb(32 35 31 / 24%);
 }
 
-.modal-head, .browser-toolbar, .mkdir-row {
+.path-browser-panel {
+  width: min(820px, calc(100vw - 32px));
+  padding: 0;
+  gap: 0;
+}
+
+.modal-head, .mkdir-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -859,62 +876,178 @@ textarea {
 
 .modal-head {
   justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.quiet-button {
+  padding: 6px 10px;
+  color: var(--muted);
+}
+
+.browser-path-row {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 12px 16px 8px;
+}
+
+.nav-button {
+  width: 34px;
+  min-width: 34px;
+  padding: 7px 0;
+  text-align: center;
+}
+
+.nav-button.wide {
+  width: auto;
+  padding-inline: 10px;
 }
 
 .browser-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  min-height: 34px;
+}
+
+.browser-shortcuts {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.browser-shortcuts button {
+  padding: 5px 9px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .mkdir-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.mkdir-row input {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.mkdir-row button {
+  padding-block: 6px;
+}
+
+.browser-footer {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: #fbfcf9;
+}
+
+.browser-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.browser-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 650;
+}
+
+.browser-primary:hover {
+  background: var(--accent-strong);
 }
 
 .browser-entries {
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
+  min-height: 260px;
 }
 
 .browser-entry {
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr) auto auto;
-  gap: 8px;
+  grid-template-columns: 78px minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: center;
-  min-height: 42px;
-  padding: 7px 9px;
+  min-height: 36px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--line);
 }
 
-.browser-entry[data-type="directory"] {
-  background: #f8fbff;
+.browser-entry:hover {
+  background: #f8faf6;
 }
 
 .browser-entry[data-special="parent"] {
-  background: #f4f7f1;
+  background: #fbfcf9;
 }
 
 .browser-entry:last-child {
   border-bottom: 0;
 }
 
-.browser-entry code {
+.entry-name {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 3px 0;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: transparent;
-  padding: 0;
+  cursor: default;
 }
 
-.browser-entry[data-type="directory"] code {
+.entry-name:hover {
+  border-color: transparent;
+}
+
+.entry-name.can-open,
+.entry-name.can-select {
+  cursor: pointer;
+}
+
+.entry-name.can-open {
   color: var(--accent-strong);
-  font-weight: 750;
+  font-weight: 700;
+}
+
+.entry-name.can-open:hover,
+.entry-name.can-select:hover {
+  text-decoration: underline;
+}
+
+.entry-action {
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  padding: 3px 6px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.entry-action:hover {
+  background: var(--soft);
+  border-color: transparent;
 }
 
 .entry-kind {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  text-transform: uppercase;
 }
 
 .browser-empty {
@@ -940,10 +1073,18 @@ pre {
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
   .setup-panel { border-right: 0; border-bottom: 1px solid var(--line); }
-  .inline-fields, .route-row, .path-field, .mkdir-row, .browser-entry { grid-template-columns: 1fr; }
+  .inline-fields, .route-row, .path-field { grid-template-columns: 1fr; }
+  .browser-path-row { grid-template-columns: auto auto auto minmax(0, 1fr); }
+  .browser-entry { grid-template-columns: 62px minmax(0, 1fr) auto; }
   .route-row span { padding-bottom: 0; }
   .secondary { width: 100%; }
   pre { height: 50vh; }
+}
+
+@media (max-width: 560px) {
+  .browser-footer { grid-template-columns: 1fr; }
+  .browser-actions { justify-content: stretch; }
+  .browser-actions button { flex: 1; }
 }
 """
 
@@ -1130,14 +1271,21 @@ function fieldPathValue(targetId, append) {
 
 async function openPathBrowser(button) {
   const target = button.dataset.target;
+  const mode = button.dataset.mode || "any";
   state.browser = {
     target,
-    mode: button.dataset.mode || "any",
+    mode,
     append: button.dataset.append === "true",
     history: [],
     historyIndex: -1,
   };
-  $("browserTitle").textContent = button.dataset.mode === "file" ? "Browse Files" : "Browse Folders";
+  const titleByMode = {
+    file: "Choose File",
+    dir: "Choose Folder",
+    any: "Choose Path",
+  };
+  $("browserTitle").textContent = titleByMode[mode] || "Choose Path";
+  $("browserUseCurrent").textContent = state.browser.append ? "Add Current" : "Choose Current";
   $("browserModal").hidden = false;
   await browseTo(fieldPathValue(target, state.browser.append));
 }
@@ -1210,25 +1358,25 @@ function appendBrowserEntry(container, entry, options = {}) {
   const kind = document.createElement("span");
   kind.className = "entry-kind";
   kind.textContent = options.kind || (entry.type === "directory" ? "Folder" : "File");
-  const name = document.createElement("code");
+  const name = document.createElement("button");
+  name.type = "button";
+  name.className = "entry-name";
   name.textContent = entry.type === "directory" && entry.name !== ".." ? `${entry.name}/` : entry.name;
-  const open = document.createElement("button");
-  open.type = "button";
-  open.className = "open-entry";
-  open.textContent = "Open";
-  open.disabled = entry.type !== "directory";
-  open.addEventListener("click", () => browseTo(entry.path).catch(showError));
-  const select = document.createElement("button");
-  select.type = "button";
-  select.className = "select-entry";
-  select.textContent = "Select";
-  select.disabled = !canSelectEntry(entry.type);
-  select.addEventListener("click", () => selectBrowserPath(entry.path));
-  row.addEventListener("dblclick", (event) => {
-    if (entry.type !== "directory" || event.target.closest("button")) return;
-    browseTo(entry.path).catch(showError);
-  });
-  row.append(kind, name, open, select);
+  if (entry.type === "directory") {
+    name.classList.add("can-open");
+    name.addEventListener("click", () => browseTo(entry.path).catch(showError));
+  } else if (canSelectEntry(entry.type)) {
+    name.classList.add("can-select");
+    name.addEventListener("click", () => selectBrowserPath(entry.path));
+  }
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "entry-action";
+  action.textContent = "Choose";
+  const canChoose = !options.special && canSelectEntry(entry.type);
+  action.hidden = !canChoose;
+  action.addEventListener("click", () => selectBrowserPath(entry.path));
+  row.append(kind, name, action);
   container.appendChild(row);
 }
 
@@ -1350,6 +1498,7 @@ function bind() {
     button.addEventListener("click", () => openPathBrowser(button).catch(showError));
   });
   $("browserClose").addEventListener("click", closeBrowser);
+  $("browserCancel").addEventListener("click", closeBrowser);
   $("browserHome").addEventListener("click", () => browseTo(state.catalog.home).catch(showError));
   $("browserWorkspace").addEventListener("click", () => browseTo(state.catalog.cwd).catch(showError));
   $("browserBack").addEventListener("click", () => browseHistory(-1).catch(showError));
