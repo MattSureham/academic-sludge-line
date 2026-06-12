@@ -194,10 +194,13 @@ def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> No
 
 def test_ui_browse_payload_and_create_directory(tmp_path: Path) -> None:
     (tmp_path / "source.txt").write_text("source", encoding="utf-8")
+    (tmp_path / "inputs").mkdir()
 
     payload = _browse_payload(tmp_path, tmp_path)
 
     entries = {entry["name"]: entry for entry in payload["entries"]}
+    assert payload["parent"] == str(tmp_path.parent)
+    assert entries["inputs"]["type"] == "directory"
     assert entries["source.txt"]["type"] == "file"
 
     created = _create_directory({"path": str(tmp_path), "name": "new-folder"}, tmp_path)

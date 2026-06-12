@@ -544,7 +544,9 @@ _INDEX_HTML = """<!doctype html>
       <div class="browser-toolbar">
         <button id="browserHome" type="button">Home</button>
         <button id="browserWorkspace" type="button">Workspace</button>
-        <button id="browserUp" type="button">Up</button>
+        <button id="browserBack" type="button">Back</button>
+        <button id="browserForward" type="button">Forward</button>
+        <button id="browserUp" type="button">Parent</button>
         <button id="browserUseCurrent" type="button">Use Current</button>
       </div>
       <input id="browserPath" class="browser-path" autocomplete="off">
@@ -884,6 +886,14 @@ textarea {
   border-bottom: 1px solid var(--line);
 }
 
+.browser-entry[data-type="directory"] {
+  background: #f8fbff;
+}
+
+.browser-entry[data-special="parent"] {
+  background: #f4f7f1;
+}
+
 .browser-entry:last-child {
   border-bottom: 0;
 }
@@ -896,10 +906,21 @@ textarea {
   padding: 0;
 }
 
+.browser-entry[data-type="directory"] code {
+  color: var(--accent-strong);
+  font-weight: 750;
+}
+
 .entry-kind {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.browser-empty {
+  padding: 18px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 pre {
@@ -1113,46 +1134,102 @@ async function openPathBrowser(button) {
     target,
     mode: button.dataset.mode || "any",
     append: button.dataset.append === "true",
+    history: [],
+    historyIndex: -1,
   };
   $("browserTitle").textContent = button.dataset.mode === "file" ? "Browse Files" : "Browse Folders";
   $("browserModal").hidden = false;
   await browseTo(fieldPathValue(target, state.browser.append));
 }
 
-async function browseTo(path) {
-  const data = await api(`/api/browse?path=${encodeURIComponent(path || state.catalog.cwd)}`);
+function pushBrowserHistory(path) {
+  if (!state.browser) state.browser = {};
+  const history = state.browser.history || [];
+  const index = Number.isInteger(state.browser.historyIndex) ? state.browser.historyIndex : history.length - 1;
+  const nextHistory = history.slice(0, index + 1);
+  if (nextHistory[nextHistory.length - 1] !== path) nextHistory.push(path);
+  state.browser.history = nextHistory;
+  state.browser.historyIndex = nextHistory.length - 1;
+}
+
+async function fetchBrowserPath(path) {
+  return api(`/api/browse?path=${encodeURIComponent(path || state.catalog.cwd)}`);
+}
+
+async function browseTo(path, options = {}) {
+  const data = await fetchBrowserPath(path);
   if (!state.browser) state.browser = {};
   state.browser.current = data;
+  if (options.record !== false) pushBrowserHistory(data.path);
+  renderBrowser(data);
+}
+
+async function browseHistory(offset) {
+  const history = state.browser?.history || [];
+  const index = Number.isInteger(state.browser?.historyIndex) ? state.browser.historyIndex : -1;
+  const nextIndex = index + offset;
+  if (nextIndex < 0 || nextIndex >= history.length) return;
+  const data = await fetchBrowserPath(history[nextIndex]);
+  state.browser.current = data;
+  state.browser.historyIndex = nextIndex;
   renderBrowser(data);
 }
 
 function renderBrowser(data) {
   $("browserPath").value = data.path;
+  $("browserBack").disabled = (state.browser?.historyIndex || 0) <= 0;
+  $("browserForward").disabled = (state.browser?.historyIndex || 0) >= (state.browser?.history || []).length - 1;
   $("browserUp").disabled = !data.parent;
   $("browserUseCurrent").disabled = state.browser?.mode === "file";
   const entries = $("browserEntries");
   entries.innerHTML = "";
-  for (const entry of data.entries) {
-    const row = document.createElement("div");
-    row.className = "browser-entry";
-    const kind = document.createElement("span");
-    kind.className = "entry-kind";
-    kind.textContent = entry.type === "directory" ? "Folder" : "File";
-    const name = document.createElement("code");
-    name.textContent = entry.name;
-    const open = document.createElement("button");
-    open.type = "button";
-    open.textContent = "Open";
-    open.disabled = entry.type !== "directory";
-    open.addEventListener("click", () => browseTo(entry.path).catch(showError));
-    const select = document.createElement("button");
-    select.type = "button";
-    select.textContent = "Select";
-    select.disabled = !canSelectEntry(entry.type);
-    select.addEventListener("click", () => selectBrowserPath(entry.path));
-    row.append(kind, name, open, select);
-    entries.appendChild(row);
+  if (data.parent) {
+    appendBrowserEntry(entries, {
+      name: "..",
+      path: data.parent,
+      type: "directory",
+    }, { kind: "Parent", special: "parent" });
   }
+  for (const entry of data.entries) {
+    appendBrowserEntry(entries, entry);
+  }
+  if (data.entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "browser-empty";
+    empty.textContent = "No files or folders";
+    entries.appendChild(empty);
+  }
+}
+
+function appendBrowserEntry(container, entry, options = {}) {
+  const row = document.createElement("div");
+  row.className = "browser-entry";
+  row.dataset.type = entry.type;
+  row.dataset.name = entry.name;
+  if (options.special) row.dataset.special = options.special;
+  const kind = document.createElement("span");
+  kind.className = "entry-kind";
+  kind.textContent = options.kind || (entry.type === "directory" ? "Folder" : "File");
+  const name = document.createElement("code");
+  name.textContent = entry.type === "directory" && entry.name !== ".." ? `${entry.name}/` : entry.name;
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "open-entry";
+  open.textContent = "Open";
+  open.disabled = entry.type !== "directory";
+  open.addEventListener("click", () => browseTo(entry.path).catch(showError));
+  const select = document.createElement("button");
+  select.type = "button";
+  select.className = "select-entry";
+  select.textContent = "Select";
+  select.disabled = !canSelectEntry(entry.type);
+  select.addEventListener("click", () => selectBrowserPath(entry.path));
+  row.addEventListener("dblclick", (event) => {
+    if (entry.type !== "directory" || event.target.closest("button")) return;
+    browseTo(entry.path).catch(showError);
+  });
+  row.append(kind, name, open, select);
+  container.appendChild(row);
 }
 
 function canSelectEntry(type) {
@@ -1196,6 +1273,7 @@ async function createFolderFromBrowser() {
   });
   $("newFolderName").value = "";
   state.browser.current = data;
+  pushBrowserHistory(data.path);
   renderBrowser(data);
 }
 
@@ -1274,6 +1352,8 @@ function bind() {
   $("browserClose").addEventListener("click", closeBrowser);
   $("browserHome").addEventListener("click", () => browseTo(state.catalog.home).catch(showError));
   $("browserWorkspace").addEventListener("click", () => browseTo(state.catalog.cwd).catch(showError));
+  $("browserBack").addEventListener("click", () => browseHistory(-1).catch(showError));
+  $("browserForward").addEventListener("click", () => browseHistory(1).catch(showError));
   $("browserUp").addEventListener("click", () => browseTo(state.browser.current.parent).catch(showError));
   $("browserUseCurrent").addEventListener("click", () => selectBrowserPath(state.browser.current.path));
   $("browserPath").addEventListener("keydown", (event) => {
