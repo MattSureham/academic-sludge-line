@@ -22,6 +22,7 @@ from asl.templates import (
     plan_prompt,
 )
 from asl.ui import _browse_payload, _create_directory, _create_project
+from asl.web_research import WebResearchSettings, WebSource
 from asl.workspace import read_json
 
 
@@ -172,6 +173,45 @@ def test_smart_loader_context_is_loaded_for_data_and_references(tmp_path: Path) 
     assert metadata["loaded_inputs"][0]["summary"]["loadedFiles"] == 1
     assert (project / "v1" / "html" / "inputs_data.html").exists()
     assert (project / "v1" / "html" / "inputs_references.html").exists()
+
+
+def test_web_research_outputs_are_saved_and_injected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def fake_search(query: str, max_results: int) -> list[WebSource]:
+        return [
+            WebSource(
+                query=query,
+                title="Evidence source",
+                url="https://example.test/source",
+                snippet="Verified source lead.",
+                provider="duckduckgo",
+            )
+        ]
+
+    monkeypatch.setattr("asl.web_research._search_duckduckgo", fake_search)
+    project = init_project(
+        root=tmp_path,
+        slug="web-research",
+        title="Web Research",
+        topic="public program evidence",
+        brief="Find source leads before drafting.",
+    )
+
+    created = PaperPipeline(
+        project,
+        client=LLMClient(offline=True),
+        web_research_settings=WebResearchSettings(enabled=True, max_queries=1, max_results_per_query=2),
+    ).run()[0]
+
+    assert (created / "web_research.md").exists()
+    assert (created / "web_research.json").exists()
+    assert (created / "html" / "web_research.html").exists()
+    assert "Web Research Leads" in (created / "prompt.md").read_text(encoding="utf-8")
+    metadata = read_json(created / "metadata.json")
+    assert metadata["web_research"]["enabled"] is True
+    assert metadata["web_research"]["sources"][0]["url"] == "https://example.test/source"
+    sources = read_json(project / "sources.json")
+    assert sources[0]["kind"] == "web"
+    assert sources[0]["version"] == "v1"
 
 
 def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> None:
@@ -439,10 +479,30 @@ def test_llm_client_calls_claude_code_with_cc_switch_settings(
     assert result.text == "claude draft"
     command = calls[0][0][0]
     assert command[:2] == ["claude", "-p"]
+    assert command[command.index("--tools") + 1] == ""
     assert "--settings" in command
     settings = command[command.index("--settings") + 1]
     assert "fake-token" in settings
     assert calls[0][1]["input"].startswith("You are assisting with transparent academic drafting")
+
+
+def test_llm_client_can_allow_claude_code_web_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr("asl.llm.shutil.which", lambda command: "/usr/bin/claude" if command == "claude" else None)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout="claude web draft\n", stderr="")
+
+    monkeypatch.setattr("asl.llm.subprocess.run", fake_run)
+    client = LLMClient(model_routes={"draft": "claude-code:default"}, allow_agent_tools=True)
+
+    result = client.generate("Draft this with sources.", "fallback", role="draft")
+
+    assert result.text == "claude web draft"
+    command = calls[0][0][0]
+    assert command[command.index("--tools") + 1] == "WebSearch,WebFetch"
+    assert "If you use web tools" in calls[0][1]["input"]
 
 
 def test_llm_client_reads_codex_exec_last_message(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -467,6 +527,28 @@ def test_llm_client_reads_codex_exec_last_message(monkeypatch: pytest.MonkeyPatc
     assert "--model" in command
     assert "gpt-test" in command
     assert calls[0][1]["input"].startswith("You are assisting with transparent academic drafting")
+
+
+def test_llm_client_can_enable_codex_web_search(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = []
+    monkeypatch.setattr("asl.llm.shutil.which", lambda command: "/usr/bin/codex" if command == "codex" else None)
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        calls.append((command, kwargs))
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("codex web draft\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("asl.llm.subprocess.run", fake_run)
+    client = LLMClient(model_routes={"draft": "codex:gpt-test"}, allow_agent_tools=True)
+
+    result = client.generate("Draft this with sources.", "fallback", role="draft")
+
+    assert result.text == "codex web draft"
+    command = calls[0][0]
+    assert command[:3] == ["codex", "--search", "exec"]
+    assert "If you use web tools" in calls[0][1]["input"]
 
 
 def test_pipeline_records_stage_model_routes(tmp_path: Path) -> None:

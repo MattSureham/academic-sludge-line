@@ -30,6 +30,13 @@ from .templates import (
     score_prompt,
     topic_discovery_prompt,
 )
+from .web_research import (
+    WebResearchResult,
+    WebResearchSettings,
+    append_web_research_to_brief,
+    run_web_research,
+    update_sources_ledger,
+)
 from .workspace import (
     accepted_version,
     latest_version,
@@ -112,6 +119,7 @@ class PaperPipeline:
         model_routes: dict[str, str] | None = None,
         start_mode: str | None = None,
         seed_draft_path: Path | None = None,
+        web_research_settings: WebResearchSettings | None = None,
     ) -> None:
         self.project_dir = project_dir.resolve()
         self.client = client or LLMClient()
@@ -149,6 +157,7 @@ class PaperPipeline:
         )
         self.smart_loader_path = smart_loader_path
         self.smart_loader_settings = smart_loader_settings or SmartLoaderSettings()
+        self.web_research_settings = web_research_settings or WebResearchSettings()
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
@@ -172,6 +181,8 @@ class PaperPipeline:
         discovery = self._discover_topic_if_needed(version_dir, working_manifest, brief)
         if discovery:
             brief = f"{brief.strip() or 'TODO'}\n\n## Topic Discovery\n\n{discovery.text}"
+        web_research = self._run_web_research(version_dir, working_manifest, brief)
+        brief = append_web_research_to_brief(brief, web_research)
 
         write_text(
             version_dir / "prompt.md",
@@ -249,10 +260,12 @@ class PaperPipeline:
                 "smart_loader": str(self.smart_loader_path) if self.smart_loader_path else None,
                 "settings": asdict(self.smart_loader_settings),
             },
+            "web_research": web_research.metadata(),
             "loaded_inputs": [group.metadata() for group in loaded_inputs],
             "outputs": [
                 "prompt.md",
                 *(["inputs/"] if loaded_inputs else []),
+                *(["web_research.md", "web_research.json"] if web_research.enabled else []),
                 "research_plan.md",
                 "draft.md",
                 "reviews/",
@@ -263,6 +276,11 @@ class PaperPipeline:
         write_json(version_dir / "metadata.json", metadata)
         render_version_html(version_dir)
         return version_dir
+
+    def _run_web_research(self, version_dir: Path, manifest: dict, brief: str) -> WebResearchResult:
+        result = run_web_research(manifest, brief, version_dir, self.web_research_settings)
+        update_sources_ledger(self.project_dir, version_dir.name, result)
+        return result
 
     def _load_inputs(self, version_dir: Path) -> list[LoadedInputGroup]:
         groups = load_input_groups(

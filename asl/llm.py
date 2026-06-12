@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -28,6 +29,10 @@ ROLE_SCORE = "score"
 MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION, ROLE_SCORE)
 LOCAL_AGENT_TIMEOUT_SECONDS = int(os.getenv("ASL_LOCAL_AGENT_TIMEOUT", "300"))
 LOCAL_AGENT_DEFAULT_MODEL_NAMES = {"", "default", "configured", "local"}
+AGENT_TOOL_POLICY = (
+    "If you use web tools, list the URLs and a short source note in your final answer. "
+    "Do not cite a web source unless you actually inspected it."
+)
 _GENERATION_ERRORS = (
     urllib.error.URLError,
     TimeoutError,
@@ -99,8 +104,10 @@ class LLMClient:
         offline: bool = False,
         model: str | None = None,
         model_routes: Mapping[str, str] | None = None,
+        allow_agent_tools: bool = False,
     ) -> None:
         self.offline = offline
+        self.allow_agent_tools = allow_agent_tools
         self.routes = ModelRoutes.build(default_model=model, routes=model_routes)
         default = self.routes.for_role(ROLE_DEFAULT)[0]
         self.api_key = _api_key_for(default)
@@ -113,7 +120,11 @@ class LLMClient:
         return any(_spec_available(spec) for spec in self.routes.for_role(ROLE_DEFAULT))
 
     def with_model_routes(self, routes: Mapping[str, str]) -> "LLMClient":
-        return LLMClient(offline=self.offline, model_routes=self.routes.with_overrides(routes).raw)
+        return LLMClient(
+            offline=self.offline,
+            model_routes=self.routes.with_overrides(routes).raw,
+            allow_agent_tools=self.allow_agent_tools,
+        )
 
     def route_metadata(self) -> dict[str, list[str]]:
         return self.routes.metadata()
@@ -210,9 +221,9 @@ class LLMClient:
         if spec.provider in {"deepseek", "qwen", "kimi", "kimi-code", "openai-compat"}:
             return _call_chat_completions(spec, prompt)
         if spec.provider == "claude-code":
-            return _call_claude_code(spec, prompt)
+            return _call_claude_code(spec, prompt, allow_tools=self.allow_agent_tools)
         if spec.provider == "codex":
-            return _call_codex_cli(spec, prompt)
+            return _call_codex_cli(spec, prompt, allow_tools=self.allow_agent_tools)
         raise ValueError(f"unsupported provider: {spec.provider}")
 
 
@@ -341,7 +352,7 @@ def _call_minimax(spec: ModelSpec, prompt: str) -> str:
     return body["choices"][0]["message"]["content"].strip()
 
 
-def _call_claude_code(spec: ModelSpec, prompt: str) -> str:
+def _call_claude_code(spec: ModelSpec, prompt: str, allow_tools: bool = False) -> str:
     command = os.getenv("ASL_CLAUDE_CODE_COMMAND", "claude")
     args = [
         command,
@@ -349,9 +360,11 @@ def _call_claude_code(spec: ModelSpec, prompt: str) -> str:
         "--output-format",
         "text",
         "--no-session-persistence",
-        "--tools",
-        "",
     ]
+    if allow_tools:
+        args.extend(["--tools", os.getenv("ASL_CLAUDE_CODE_TOOLS", "WebSearch,WebFetch")])
+    else:
+        args.extend(["--tools", ""])
     if spec.model not in LOCAL_AGENT_DEFAULT_MODEL_NAMES:
         args.extend(["--model", spec.model])
 
@@ -361,7 +374,7 @@ def _call_claude_code(spec: ModelSpec, prompt: str) -> str:
 
     completed = subprocess.run(
         args,
-        input=_agent_prompt(prompt),
+        input=_agent_prompt(prompt, allow_tools=allow_tools),
         capture_output=True,
         text=True,
         timeout=LOCAL_AGENT_TIMEOUT_SECONDS,
@@ -373,28 +386,32 @@ def _call_claude_code(spec: ModelSpec, prompt: str) -> str:
     return completed.stdout.strip()
 
 
-def _call_codex_cli(spec: ModelSpec, prompt: str) -> str:
+def _call_codex_cli(spec: ModelSpec, prompt: str, allow_tools: bool = False) -> str:
     command = os.getenv("ASL_CODEX_COMMAND", "codex")
     output_path = None
     try:
         with tempfile.NamedTemporaryFile(prefix="asl-codex-", suffix=".txt", delete=False) as output:
             output_path = Path(output.name)
 
-        args = [
-            command,
-            "exec",
-            "--cd",
-            str(Path.cwd()),
-            "--sandbox",
-            "read-only",
-            "--ask-for-approval",
-            "never",
-            "--skip-git-repo-check",
-            "--color",
-            "never",
-            "--output-last-message",
-            str(output_path),
-        ]
+        args = [command]
+        if allow_tools:
+            args.extend(_codex_tool_args())
+        args.extend(
+            [
+                "exec",
+                "--cd",
+                str(Path.cwd()),
+                "--sandbox",
+                "read-only",
+                "--ask-for-approval",
+                "never",
+                "--skip-git-repo-check",
+                "--color",
+                "never",
+                "--output-last-message",
+                str(output_path),
+            ]
+        )
         if spec.endpoint and not spec.endpoint.startswith("cc-switch:"):
             args.extend(["--profile", spec.endpoint])
         if spec.model not in LOCAL_AGENT_DEFAULT_MODEL_NAMES:
@@ -403,7 +420,7 @@ def _call_codex_cli(spec: ModelSpec, prompt: str) -> str:
 
         completed = subprocess.run(
             args,
-            input=_agent_prompt(prompt),
+            input=_agent_prompt(prompt, allow_tools=allow_tools),
             capture_output=True,
             text=True,
             timeout=LOCAL_AGENT_TIMEOUT_SECONDS,
@@ -423,8 +440,18 @@ def _call_codex_cli(spec: ModelSpec, prompt: str) -> str:
             output_path.unlink()
 
 
-def _agent_prompt(prompt: str) -> str:
-    return f"{SYSTEM_POLICY}\n\n{prompt}"
+def _codex_tool_args() -> list[str]:
+    raw = os.getenv("ASL_CODEX_TOOL_ARGS")
+    if raw:
+        return shlex.split(raw)
+    return ["--search"]
+
+
+def _agent_prompt(prompt: str, allow_tools: bool = False) -> str:
+    policies = SYSTEM_POLICY
+    if allow_tools:
+        policies = f"{policies}\n\n{AGENT_TOOL_POLICY}"
+    return f"{policies}\n\n{prompt}"
 
 
 def _subprocess_error(provider: str, completed: subprocess.CompletedProcess[str]) -> str:

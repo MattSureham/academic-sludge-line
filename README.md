@@ -132,6 +132,40 @@ Every version also gets a static HTML bundle under `vN/html/`. Open
 revision plan, quality scores, metadata, and extracted image assets in a
 browser-friendly format.
 
+## Web Research And Agent Tools
+
+ASL has two separate online research controls.
+
+`--web-research` runs an auditable pre-drafting search stage. It builds a small
+set of queries from the paper title, topic, and research question, saves results
+to `vN/web_research.md` and `vN/web_research.json`, appends source leads to the
+project's `sources.json`, and injects those leads into the planning/drafting
+prompt. This stage is meant to make search traces visible to humans:
+
+```bash
+asl run papers/demo-policy-paper \
+  --web-research \
+  --web-research-max-queries 3 \
+  --web-research-max-results 5
+```
+
+`--allow-agent-tools` lets local agent providers use their own web/tool support.
+For Claude Code, ASL passes `--tools WebSearch,WebFetch` by default. For Codex,
+ASL invokes `codex --search exec ...`. These agent searches can improve writing,
+but they are less structured than the auditable `--web-research` stage, so ASL
+also tells agents to include inspected URLs and source notes in their final
+message.
+
+```bash
+asl run papers/demo-policy-paper \
+  --draft-model claude-code:default \
+  --review-model codex:default \
+  --allow-agent-tools
+```
+
+Use `ASL_CLAUDE_CODE_TOOLS` to override the Claude Code tools list, and
+`ASL_CODEX_TOOL_ARGS` to override the Codex tool/search arguments.
+
 ## Web UI
 
 Start the local UI:

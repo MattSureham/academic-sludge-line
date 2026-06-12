@@ -16,6 +16,7 @@ from .catalog import catalog_payload
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, PaperPipeline, init_project
 from .smart_loader import SmartLoaderSettings
+from .web_research import WebResearchSettings
 from .workspace import read_json, read_text
 
 
@@ -153,7 +154,10 @@ def _run_project(payload: dict, cwd: Path) -> dict:
     reviewers = tuple(_split_csv(payload.get("reviewers")) or DEFAULT_REVIEWERS)
     pipeline = PaperPipeline(
         project_dir,
-        client=LLMClient(offline=bool(payload.get("offline"))),
+        client=LLMClient(
+            offline=bool(payload.get("offline")),
+            allow_agent_tools=bool(payload.get("allowAgentTools")),
+        ),
         data_paths=tuple(Path(path) for path in _split_paths(payload.get("data"))),
         reference_paths=tuple(Path(path) for path in _split_paths(payload.get("references"))),
         smart_loader_path=Path(payload["smartLoader"]) if payload.get("smartLoader") else None,
@@ -161,6 +165,7 @@ def _run_project(payload: dict, cwd: Path) -> dict:
         model_routes=_model_routes(payload.get("models", {})),
         start_mode=payload.get("startMode") or None,
         seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
+        web_research_settings=_web_research_settings(payload.get("webResearch", {})),
     )
     created = pipeline.run(cycles=max(1, int(payload.get("cycles") or 1)), reviewers=reviewers)
     return {
@@ -240,6 +245,8 @@ def _version_payload(version_dir: Path) -> dict:
     files = {}
     for relative in (
         "topic_proposal.md",
+        "web_research.md",
+        "web_research.json",
         "research_plan.md",
         "draft.md",
         "revision_plan.md",
@@ -326,6 +333,16 @@ def _loader_settings(loader: object) -> SmartLoaderSettings:
         pdf_dpi=_int_setting(loader.get("pdfDpi"), 180),
         ocr_assets=_bool_setting(loader.get("ocrAssets"), True),
         ocr_language=str(loader.get("ocrLanguage") or "eng").strip() or "eng",
+    )
+
+
+def _web_research_settings(payload: object) -> WebResearchSettings:
+    if not isinstance(payload, dict):
+        payload = {}
+    return WebResearchSettings(
+        enabled=_bool_setting(payload.get("enabled"), False),
+        max_queries=_int_setting(payload.get("maxQueries"), 3),
+        max_results_per_query=_int_setting(payload.get("maxResultsPerQuery"), 5),
     )
 
 
@@ -427,6 +444,24 @@ _INDEX_HTML = """<!doctype html>
           <input id="offline" name="offline" type="checkbox" checked>
           Offline
         </label>
+        <div class="check-grid">
+          <label class="checkline">
+            <input id="webResearch" type="checkbox">
+            Web research
+          </label>
+          <label class="checkline">
+            <input id="allowAgentTools" type="checkbox">
+            Agent web/tools
+          </label>
+        </div>
+        <div class="inline-fields compact-fields">
+          <label>Search queries
+            <input id="webResearchMaxQueries" type="number" min="1" value="3">
+          </label>
+          <label>Results/query
+            <input id="webResearchMaxResults" type="number" min="1" value="5">
+          </label>
+        </div>
         <div id="runModelRoutes" class="routes"></div>
         <label>Additional data
           <textarea id="runData" rows="3"></textarea>
@@ -737,6 +772,10 @@ textarea {
   gap: 12px;
 }
 
+.compact-fields label {
+  margin-top: 4px;
+}
+
 .path-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -758,6 +797,17 @@ textarea {
 .checkline input {
   width: 16px;
   min-height: 16px;
+}
+
+.check-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 4px 0 0;
+}
+
+.check-grid .checkline {
+  margin: 6px 0;
 }
 
 .route-row {
@@ -1074,6 +1124,8 @@ pre {
   .layout { grid-template-columns: 1fr; }
   .setup-panel { border-right: 0; border-bottom: 1px solid var(--line); }
   .inline-fields, .route-row, .path-field { grid-template-columns: 1fr; }
+  .compact-fields { grid-template-columns: 1fr 1fr; }
+  .check-grid { grid-template-columns: 1fr; }
   .browser-path-row { grid-template-columns: auto auto auto minmax(0, 1fr); }
   .browser-entry { grid-template-columns: 62px minmax(0, 1fr) auto; }
   .route-row span { padding-bottom: 0; }
@@ -1458,6 +1510,7 @@ async function runProject(event) {
     startMode: $("runStartMode").value,
     seedDraftFile: $("runSeedDraft").value,
     offline: $("offline").checked,
+    allowAgentTools: $("allowAgentTools").checked,
     reviewers: $("reviewers").value,
     data: $("runData").value,
     references: $("runReferences").value,
@@ -1468,6 +1521,11 @@ async function runProject(event) {
       pdfDpi: $("pdfDpi").value,
       ocrAssets: $("ocrAssets").checked,
       ocrLanguage: $("ocrLanguage").value,
+    },
+    webResearch: {
+      enabled: $("webResearch").checked,
+      maxQueries: $("webResearchMaxQueries").value,
+      maxResultsPerQuery: $("webResearchMaxResults").value,
     },
     models: collectRoutes("runModelRoutes"),
   };

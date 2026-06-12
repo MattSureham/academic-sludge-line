@@ -9,6 +9,7 @@ from . import __version__
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, START_MODES, PaperPipeline, init_project
 from .smart_loader import SmartLoaderSettings
+from .web_research import WebResearchSettings
 from .workspace import read_text
 
 
@@ -52,6 +53,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("project_dir", type=Path, help="path to papers/<slug>")
     run.add_argument("--cycles", type=int, default=1, help="number of versions to create")
     run.add_argument("--offline", action="store_true", help="force template-only mode")
+    run.add_argument(
+        "--allow-agent-tools",
+        action="store_true",
+        help="allow Claude Code/Codex local providers to use configured tools such as web search",
+    )
+    run.add_argument(
+        "--web-research",
+        action="store_true",
+        help="run an auditable web-research stage before planning and drafting",
+    )
+    run.add_argument("--web-research-max-queries", type=int, default=3, help="maximum generated web research queries")
+    run.add_argument("--web-research-max-results", type=int, default=5, help="maximum web research results per query")
     run.add_argument("--start-mode", choices=START_MODES, help="override paper starting mode")
     run.add_argument("--seed-draft-file", type=Path, help="existing draft to rewrite")
     run.add_argument("--model", help="default model route for this run")
@@ -113,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         reviewers = tuple(r.strip() for r in args.reviewers.split(",") if r.strip())
         pipeline = PaperPipeline(
             args.project_dir,
-            client=LLMClient(offline=args.offline, model=args.model),
+            client=LLMClient(offline=args.offline, model=args.model, allow_agent_tools=args.allow_agent_tools),
             data_paths=tuple(args.data),
             reference_paths=tuple(args.references),
             smart_loader_path=args.smart_loader,
@@ -121,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             model_routes=_model_routes_from_args(args),
             start_mode=args.start_mode,
             seed_draft_path=args.seed_draft_file,
+            web_research_settings=_web_research_settings_from_args(args),
         )
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
@@ -180,6 +194,14 @@ def _loader_settings_from_args(args: argparse.Namespace) -> SmartLoaderSettings:
         pdf_dpi=getattr(args, "pdf_dpi", 180),
         ocr_assets=not getattr(args, "no_ocr_assets", False),
         ocr_language=getattr(args, "ocr_language", "eng"),
+    )
+
+
+def _web_research_settings_from_args(args: argparse.Namespace) -> WebResearchSettings:
+    return WebResearchSettings(
+        enabled=bool(getattr(args, "web_research", False)),
+        max_queries=getattr(args, "web_research_max_queries", 3),
+        max_results_per_query=getattr(args, "web_research_max_results", 5),
     )
 
 
