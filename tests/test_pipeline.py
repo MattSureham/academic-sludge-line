@@ -21,7 +21,7 @@ from asl.templates import (
     offline_revision,
     plan_prompt,
 )
-from asl.ui import _browse_payload, _create_directory
+from asl.ui import _browse_payload, _create_directory, _create_project
 from asl.workspace import read_json
 
 
@@ -206,6 +206,31 @@ def test_ui_browse_payload_and_create_directory(tmp_path: Path) -> None:
     assert created["path"] == str(tmp_path / "new-folder")
     with pytest.raises(ValueError):
         _create_directory({"path": str(tmp_path), "name": "../bad"}, tmp_path)
+
+
+def test_ui_create_project_allows_blank_title(tmp_path: Path) -> None:
+    result = _create_project(
+        {
+            "root": str(tmp_path),
+            "slug": "",
+            "title": "",
+            "topic": "transparent public program evaluation",
+            "researchQuestion": "",
+            "brief": "",
+            "data": "",
+            "references": "",
+            "models": {},
+            "startMode": "from-scratch",
+            "seedDraftFile": "",
+        },
+        tmp_path,
+    )
+
+    project = Path(result["projectDir"])
+    manifest = read_json(project / "project.json")
+
+    assert project.name == "transparent-public-program-evaluation"
+    assert manifest["title"] == "transparent public program evaluation"
 
 
 def test_llm_failure_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

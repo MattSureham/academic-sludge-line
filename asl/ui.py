@@ -118,10 +118,11 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
 
 def _create_project(payload: dict, cwd: Path) -> dict:
     root = _resolve_path(payload.get("root") or str(cwd), cwd)
+    title = _project_title(payload)
     project = init_project(
         root=root,
         slug=payload.get("slug") or None,
-        title=payload["title"],
+        title=title,
         topic=payload["topic"],
         research_question=payload.get("researchQuestion") or None,
         brief=payload.get("brief") or "",
@@ -132,6 +133,19 @@ def _create_project(payload: dict, cwd: Path) -> dict:
         seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
     )
     return {"projectDir": str(project), "project": _project_payload(project)}
+
+
+def _project_title(payload: dict) -> str:
+    title = str(payload.get("title") or "").strip()
+    if title:
+        return title
+    topic = str(payload.get("topic") or "").strip()
+    if topic:
+        return topic
+    slug = str(payload.get("slug") or "").strip()
+    if slug:
+        return slug.replace("-", " ").replace("_", " ").title()
+    return "Untitled Paper"
 
 
 def _run_project(payload: dict, cwd: Path) -> dict:
@@ -479,8 +493,8 @@ _INDEX_HTML = """<!doctype html>
           <label>Slug
             <input id="slug" autocomplete="off">
           </label>
-          <label><span class="label-text">Title <span class="required-star" aria-hidden="true">*</span></span>
-            <input id="title" required autocomplete="off">
+          <label>Title
+            <input id="title" autocomplete="off">
           </label>
         </div>
         <label><span class="label-text">Topic <span id="topicRequired" class="required-star" aria-hidden="true">*</span></span>
