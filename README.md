@@ -151,6 +151,11 @@ data/reference paths, run cycles, and preview generated outputs. It uses the sam
 provider/model catalog as the CLI and defaults the local OpenAI-compatible vLLM
 preset to `http://127.0.0.1:8000/v1`.
 
+In the New Paper tab, `Workspace root` is the parent directory where ASL creates
+`papers/<slug>/`. The Run tab's `Project path` points to one existing
+`papers/<slug>/` project directory. Path fields include a local browser for
+choosing files or folders and creating new folders before selecting a path.
+
 ## Starting Modes And Quality Gate
 
 ASL can start a writing task in three modes:

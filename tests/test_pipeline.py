@@ -21,6 +21,7 @@ from asl.templates import (
     offline_revision,
     plan_prompt,
 )
+from asl.ui import _browse_payload, _create_directory
 from asl.workspace import read_json
 
 
@@ -189,6 +190,22 @@ def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> No
     assert (version / "html" / "reviews_domain.html").exists()
     asset_html = (version / "html" / "assets.html").read_text(encoding="utf-8")
     assert "../inputs/assets/references/input-1/page-1.png" in asset_html
+
+
+def test_ui_browse_payload_and_create_directory(tmp_path: Path) -> None:
+    (tmp_path / "source.txt").write_text("source", encoding="utf-8")
+
+    payload = _browse_payload(tmp_path, tmp_path)
+
+    entries = {entry["name"]: entry for entry in payload["entries"]}
+    assert entries["source.txt"]["type"] == "file"
+
+    created = _create_directory({"path": str(tmp_path), "name": "new-folder"}, tmp_path)
+
+    assert (tmp_path / "new-folder").is_dir()
+    assert created["path"] == str(tmp_path / "new-folder")
+    with pytest.raises(ValueError):
+        _create_directory({"path": str(tmp_path), "name": "../bad"}, tmp_path)
 
 
 def test_llm_failure_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

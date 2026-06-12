@@ -49,7 +49,13 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
                 self._send_text(_APP_JS, "text/javascript; charset=utf-8")
                 return
             if parsed.path == "/api/catalog":
-                self._send_json({"cwd": str(cwd), **catalog_payload()})
+                self._send_json({"cwd": str(cwd), "home": str(Path.home()), **catalog_payload()})
+                return
+            if parsed.path == "/api/browse":
+                params = parse_qs(parsed.query)
+                path_value = params.get("path", [str(cwd)])[0]
+                path = _resolve_path(path_value or str(cwd), cwd)
+                self._send_json(_browse_payload(path, cwd))
                 return
             if parsed.path == "/api/projects":
                 params = parse_qs(parsed.query)
@@ -72,6 +78,9 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
                     return
                 if parsed.path == "/api/run":
                     self._send_json(_run_project(payload, cwd))
+                    return
+                if parsed.path == "/api/mkdir":
+                    self._send_json(_create_directory(payload, cwd))
                     return
                 self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             except Exception as exc:  # noqa: BLE001 - UI should return readable failures.
@@ -145,6 +154,46 @@ def _run_project(payload: dict, cwd: Path) -> dict:
         "project": _project_payload(project_dir),
         "latest": _version_payload(created[-1]) if created else {},
     }
+
+
+def _browse_payload(path: Path, cwd: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"path not found: {path}")
+    directory = path if path.is_dir() else path.parent
+    entries = []
+    for child in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        try:
+            stat = child.stat()
+        except OSError:
+            continue
+        entries.append(
+            {
+                "name": child.name,
+                "path": str(child),
+                "type": "directory" if child.is_dir() else "file",
+                "size": stat.st_size if child.is_file() else None,
+            }
+        )
+    parent = directory.parent if directory.parent != directory else None
+    return {
+        "cwd": str(cwd),
+        "home": str(Path.home()),
+        "path": str(directory),
+        "parent": str(parent) if parent else None,
+        "entries": entries,
+    }
+
+
+def _create_directory(payload: dict, cwd: Path) -> dict:
+    parent = _resolve_path(str(payload.get("path") or cwd), cwd)
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        raise ValueError("folder name is required")
+    if Path(name).name != name or name in {".", ".."}:
+        raise ValueError("folder name must be a single directory name")
+    directory = parent / name
+    directory.mkdir(parents=False, exist_ok=False)
+    return _browse_payload(directory, cwd)
 
 
 def _project_payload(project_dir: Path) -> dict:
@@ -331,7 +380,10 @@ _INDEX_HTML = """<!doctype html>
           <select id="projectSelect"></select>
         </label>
         <label>Project path
-          <input id="runProjectDir" name="projectDir" autocomplete="off">
+          <div class="path-field">
+            <input id="runProjectDir" name="projectDir" autocomplete="off">
+            <button type="button" class="browse-btn" data-target="runProjectDir" data-mode="dir">Browse</button>
+          </div>
         </label>
         <div class="inline-fields">
           <label>Cycles
@@ -351,7 +403,10 @@ _INDEX_HTML = """<!doctype html>
             </select>
           </label>
           <label>Seed draft
-            <input id="runSeedDraft" placeholder="path/to/draft.md">
+            <div class="path-field">
+              <input id="runSeedDraft" placeholder="path/to/draft.md">
+              <button type="button" class="browse-btn" data-target="runSeedDraft" data-mode="file">Browse</button>
+            </div>
           </label>
         </div>
         <label class="checkline">
@@ -361,12 +416,17 @@ _INDEX_HTML = """<!doctype html>
         <div id="runModelRoutes" class="routes"></div>
         <label>Additional data
           <textarea id="runData" rows="3"></textarea>
+          <button type="button" class="secondary browse-btn" data-target="runData" data-mode="any" data-append="true">Add Path</button>
         </label>
         <label>Additional references
           <textarea id="runReferences" rows="3"></textarea>
+          <button type="button" class="secondary browse-btn" data-target="runReferences" data-mode="any" data-append="true">Add Path</button>
         </label>
         <label>smart-loader
-          <input id="smartLoader" placeholder="../smart-loader">
+          <div class="path-field">
+            <input id="smartLoader" placeholder="../smart-loader">
+            <button type="button" class="browse-btn" data-target="smartLoader" data-mode="any">Browse</button>
+          </div>
         </label>
         <div class="loader-options">
           <label class="checkline">
@@ -394,8 +454,11 @@ _INDEX_HTML = """<!doctype html>
 
       <form id="initForm" class="view" data-view="init">
         <h2>New Paper</h2>
-        <label>Root
-          <input id="root" value=".">
+        <label>Workspace root
+          <div class="path-field">
+            <input id="root" value=".">
+            <button type="button" class="browse-btn" data-target="root" data-mode="dir">Browse</button>
+          </div>
         </label>
         <div class="inline-fields">
           <label>Start mode
@@ -406,7 +469,10 @@ _INDEX_HTML = """<!doctype html>
             </select>
           </label>
           <label>Seed draft
-            <input id="initSeedDraft" placeholder="path/to/draft.md">
+            <div class="path-field">
+              <input id="initSeedDraft" placeholder="path/to/draft.md">
+              <button type="button" class="browse-btn" data-target="initSeedDraft" data-mode="file">Browse</button>
+            </div>
           </label>
         </div>
         <div class="inline-fields">
@@ -429,9 +495,11 @@ _INDEX_HTML = """<!doctype html>
         <div id="initModelRoutes" class="routes"></div>
         <label>Data
           <textarea id="initData" rows="3"></textarea>
+          <button type="button" class="secondary browse-btn" data-target="initData" data-mode="any" data-append="true">Add Path</button>
         </label>
         <label>References
           <textarea id="initReferences" rows="3"></textarea>
+          <button type="button" class="secondary browse-btn" data-target="initReferences" data-mode="any" data-append="true">Add Path</button>
         </label>
         <button class="primary" type="submit">Create</button>
       </form>
@@ -452,6 +520,27 @@ _INDEX_HTML = """<!doctype html>
       <pre id="preview"></pre>
     </section>
   </main>
+
+  <div id="browserModal" class="modal" hidden>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="browserTitle">
+      <div class="modal-head">
+        <h2 id="browserTitle">Browse</h2>
+        <button id="browserClose" type="button">Close</button>
+      </div>
+      <div class="browser-toolbar">
+        <button id="browserHome" type="button">Home</button>
+        <button id="browserWorkspace" type="button">Workspace</button>
+        <button id="browserUp" type="button">Up</button>
+        <button id="browserUseCurrent" type="button">Use Current</button>
+      </div>
+      <input id="browserPath" class="browser-path" autocomplete="off">
+      <div class="mkdir-row">
+        <input id="newFolderName" placeholder="New folder">
+        <button id="createFolderBtn" type="button">Create</button>
+      </div>
+      <div id="browserEntries" class="browser-entries"></div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>
@@ -562,6 +651,11 @@ button:hover { border-color: var(--accent); }
 
 .primary:hover { background: var(--accent-strong); }
 
+.secondary {
+  width: max-content;
+  min-width: 96px;
+}
+
 .tab.active, .file-tabs button.active {
   border-color: var(--accent);
   background: var(--soft);
@@ -599,6 +693,17 @@ textarea {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.path-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.path-field input {
+  min-width: 0;
 }
 
 .checkline {
@@ -686,6 +791,88 @@ textarea {
 .provider-item .ok { color: var(--accent-strong); }
 .provider-item .missing { color: var(--warn); }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(32 35 31 / 38%);
+  z-index: 20;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-panel {
+  width: min(920px, 100%);
+  max-height: min(760px, calc(100vh - 36px));
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  gap: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 24px 80px rgb(32 35 31 / 24%);
+}
+
+.modal-head, .browser-toolbar, .mkdir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.modal-head {
+  justify-content: space-between;
+}
+
+.browser-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.mkdir-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.browser-entries {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.browser-entry {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.browser-entry:last-child {
+  border-bottom: 0;
+}
+
+.browser-entry code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  padding: 0;
+}
+
+.entry-kind {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 pre {
   margin: 0;
   height: calc(100vh - 190px);
@@ -703,8 +890,9 @@ pre {
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
   .setup-panel { border-right: 0; border-bottom: 1px solid var(--line); }
-  .inline-fields, .route-row { grid-template-columns: 1fr; }
+  .inline-fields, .route-row, .path-field, .mkdir-row, .browser-entry { grid-template-columns: 1fr; }
   .route-row span { padding-bottom: 0; }
+  .secondary { width: 100%; }
   pre { height: 50vh; }
 }
 """
@@ -716,6 +904,7 @@ const state = {
   projects: [],
   currentProject: null,
   latestFiles: {},
+  browser: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -866,6 +1055,106 @@ function switchTab(name) {
   document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.dataset.view === name));
 }
 
+function fieldPathValue(targetId, append) {
+  const field = $(targetId);
+  if (!field) return state.catalog?.cwd || ".";
+  if (!append) return field.value.trim() || state.catalog?.cwd || ".";
+  const lines = field.value.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);
+  return lines[lines.length - 1] || $("root")?.value || state.catalog?.cwd || ".";
+}
+
+async function openPathBrowser(button) {
+  const target = button.dataset.target;
+  state.browser = {
+    target,
+    mode: button.dataset.mode || "any",
+    append: button.dataset.append === "true",
+  };
+  $("browserTitle").textContent = button.dataset.mode === "file" ? "Browse Files" : "Browse Folders";
+  $("browserModal").hidden = false;
+  await browseTo(fieldPathValue(target, state.browser.append));
+}
+
+async function browseTo(path) {
+  const data = await api(`/api/browse?path=${encodeURIComponent(path || state.catalog.cwd)}`);
+  if (!state.browser) state.browser = {};
+  state.browser.current = data;
+  renderBrowser(data);
+}
+
+function renderBrowser(data) {
+  $("browserPath").value = data.path;
+  $("browserUp").disabled = !data.parent;
+  $("browserUseCurrent").disabled = state.browser?.mode === "file";
+  const entries = $("browserEntries");
+  entries.innerHTML = "";
+  for (const entry of data.entries) {
+    const row = document.createElement("div");
+    row.className = "browser-entry";
+    const kind = document.createElement("span");
+    kind.className = "entry-kind";
+    kind.textContent = entry.type === "directory" ? "Folder" : "File";
+    const name = document.createElement("code");
+    name.textContent = entry.name;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "Open";
+    open.disabled = entry.type !== "directory";
+    open.addEventListener("click", () => browseTo(entry.path).catch(showError));
+    const select = document.createElement("button");
+    select.type = "button";
+    select.textContent = "Select";
+    select.disabled = !canSelectEntry(entry.type);
+    select.addEventListener("click", () => selectBrowserPath(entry.path));
+    row.append(kind, name, open, select);
+    entries.appendChild(row);
+  }
+}
+
+function canSelectEntry(type) {
+  const mode = state.browser?.mode || "any";
+  return mode === "any" || mode === type || (mode === "dir" && type === "directory");
+}
+
+function selectBrowserPath(path) {
+  const target = state.browser?.target;
+  if (!target) return;
+  const field = $(target);
+  if (!field) return;
+  if (state.browser?.append && field.tagName === "TEXTAREA") {
+    const existing = field.value.trim();
+    field.value = existing ? `${existing}\\n${path}` : path;
+  } else {
+    field.value = path;
+  }
+  closeBrowser();
+  if (target === "root") {
+    loadProjects().catch(showError);
+  }
+  if (target === "runProjectDir") {
+    loadProject(path).catch(showError);
+  }
+}
+
+function closeBrowser() {
+  $("browserModal").hidden = true;
+  $("newFolderName").value = "";
+  state.browser = null;
+}
+
+async function createFolderFromBrowser() {
+  const name = $("newFolderName").value.trim();
+  const current = state.browser?.current?.path;
+  if (!name || !current) return;
+  const data = await api("/api/mkdir", {
+    method: "POST",
+    body: JSON.stringify({ path: current, name }),
+  });
+  $("newFolderName").value = "";
+  state.browser.current = data;
+  renderBrowser(data);
+}
+
 async function createProject(event) {
   event.preventDefault();
   setStatus("Creating");
@@ -933,6 +1222,21 @@ function bind() {
     await loadProject(event.target.value);
   });
   $("runProjectDir").addEventListener("change", async (event) => loadProject(event.target.value));
+  document.querySelectorAll(".browse-btn").forEach((button) => {
+    button.addEventListener("click", () => openPathBrowser(button).catch(showError));
+  });
+  $("browserClose").addEventListener("click", closeBrowser);
+  $("browserHome").addEventListener("click", () => browseTo(state.catalog.home).catch(showError));
+  $("browserWorkspace").addEventListener("click", () => browseTo(state.catalog.cwd).catch(showError));
+  $("browserUp").addEventListener("click", () => browseTo(state.browser.current.parent).catch(showError));
+  $("browserUseCurrent").addEventListener("click", () => selectBrowserPath(state.browser.current.path));
+  $("browserPath").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") browseTo(event.target.value).catch(showError);
+  });
+  $("createFolderBtn").addEventListener("click", () => createFolderFromBrowser().catch(showError));
+  $("newFolderName").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") createFolderFromBrowser().catch(showError);
+  });
   $("initForm").addEventListener("submit", (event) => createProject(event).catch(showError));
   $("runForm").addEventListener("submit", (event) => runProject(event).catch(showError));
 }
