@@ -379,9 +379,9 @@ _INDEX_HTML = """<!doctype html>
         <label>Project
           <select id="projectSelect"></select>
         </label>
-        <label>Project path
+        <label><span class="label-text">Project path <span class="required-star" aria-hidden="true">*</span></span>
           <div class="path-field">
-            <input id="runProjectDir" name="projectDir" autocomplete="off">
+            <input id="runProjectDir" name="projectDir" autocomplete="off" required>
             <button type="button" class="browse-btn" data-target="runProjectDir" data-mode="dir">Browse</button>
           </div>
         </label>
@@ -402,7 +402,7 @@ _INDEX_HTML = """<!doctype html>
               <option value="rewrite">Rewrite</option>
             </select>
           </label>
-          <label>Seed draft
+          <label><span class="label-text">Seed draft <span id="runSeedDraftRequired" class="required-star hidden" aria-hidden="true">*</span></span>
             <div class="path-field">
               <input id="runSeedDraft" placeholder="path/to/draft.md">
               <button type="button" class="browse-btn" data-target="runSeedDraft" data-mode="file">Browse</button>
@@ -454,9 +454,9 @@ _INDEX_HTML = """<!doctype html>
 
       <form id="initForm" class="view" data-view="init">
         <h2>New Paper</h2>
-        <label>Workspace root
+        <label><span class="label-text">Workspace root <span class="required-star" aria-hidden="true">*</span></span>
           <div class="path-field">
-            <input id="root" value=".">
+            <input id="root" value="." required>
             <button type="button" class="browse-btn" data-target="root" data-mode="dir">Browse</button>
           </div>
         </label>
@@ -468,7 +468,7 @@ _INDEX_HTML = """<!doctype html>
               <option value="rewrite">Rewrite existing draft</option>
             </select>
           </label>
-          <label>Seed draft
+          <label><span class="label-text">Seed draft <span id="initSeedDraftRequired" class="required-star hidden" aria-hidden="true">*</span></span>
             <div class="path-field">
               <input id="initSeedDraft" placeholder="path/to/draft.md">
               <button type="button" class="browse-btn" data-target="initSeedDraft" data-mode="file">Browse</button>
@@ -479,12 +479,12 @@ _INDEX_HTML = """<!doctype html>
           <label>Slug
             <input id="slug" autocomplete="off">
           </label>
-          <label>Title
+          <label><span class="label-text">Title <span class="required-star" aria-hidden="true">*</span></span>
             <input id="title" required autocomplete="off">
           </label>
         </div>
-        <label>Topic
-          <input id="topic" autocomplete="off">
+        <label><span class="label-text">Topic <span id="topicRequired" class="required-star" aria-hidden="true">*</span></span>
+          <input id="topic" autocomplete="off" required>
         </label>
         <label>Research question
           <input id="researchQuestion" autocomplete="off">
@@ -672,6 +672,21 @@ label {
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
+}
+
+.label-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.required-star {
+  color: #dc2626;
+  font-weight: 900;
+}
+
+.required-star.hidden {
+  display: none;
 }
 
 input, textarea, select {
@@ -921,6 +936,21 @@ async function api(path, options = {}) {
 
 function setStatus(text) {
   $("status").textContent = text;
+}
+
+function setRequiredState(inputId, starId, enabled) {
+  const input = $(inputId);
+  const star = $(starId);
+  if (input) input.required = enabled;
+  if (star) star.classList.toggle("hidden", !enabled);
+}
+
+function updateRequiredMarkers() {
+  const initMode = $("initStartMode").value;
+  const runMode = $("runStartMode").value;
+  setRequiredState("topic", "topicRequired", initMode !== "discover-topic");
+  setRequiredState("initSeedDraft", "initSeedDraftRequired", initMode === "rewrite");
+  setRequiredState("runSeedDraft", "runSeedDraftRequired", runMode === "rewrite");
 }
 
 function routeRows(containerId) {
@@ -1222,6 +1252,8 @@ function bind() {
     await loadProject(event.target.value);
   });
   $("runProjectDir").addEventListener("change", async (event) => loadProject(event.target.value));
+  $("initStartMode").addEventListener("change", updateRequiredMarkers);
+  $("runStartMode").addEventListener("change", updateRequiredMarkers);
   document.querySelectorAll(".browse-btn").forEach((button) => {
     button.addEventListener("click", () => openPathBrowser(button).catch(showError));
   });
@@ -1239,6 +1271,7 @@ function bind() {
   });
   $("initForm").addEventListener("submit", (event) => createProject(event).catch(showError));
   $("runForm").addEventListener("submit", (event) => runProject(event).catch(showError));
+  updateRequiredMarkers();
 }
 
 function showError(error) {
