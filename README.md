@@ -16,27 +16,33 @@ TODO, refuses fake citations, and separates drafts from verified research.
 - Writes static HTML views for every generated version.
 - Keeps a `sources.json` placeholder so claims can be audited later.
 
-## Install
+## Deploy Locally
 
-Recommended:
+ASL is a local Python CLI pipeline, not a hosted service. Deployment means
+installing the `asl` command, verifying it, and running a paper workspace.
+
+Fast path from the repository root:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+sh scripts/deploy_local.sh
+```
+
+Manual path:
+
+```bash
+python3.11 -m venv .venv  # or any Python 3.10+ command
+. .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e .
+asl --version
 ```
 
-No-install local run:
+The core pipeline has no required runtime dependencies beyond Python 3.10+.
+Optional integrations such as LLM APIs, local agent CLIs, OCR, Poppler, and
+`smart-loader` are only needed when you use those features.
 
-```bash
-python -m asl.cli --version
-```
-
-If your system Python has a writable user site, this also works:
-
-```bash
-python -m pip install -e .
-```
+See [DEPLOY.md](DEPLOY.md) for copy-paste deployment steps and agent-specific
+instructions.
 
 ## Quick Start
 
@@ -49,6 +55,12 @@ asl init \
   --brief-file examples/topic_brief.md
 
 asl run papers/demo-policy-paper --cycles 2 --offline
+```
+
+No-install local run:
+
+```bash
+python3.11 -m asl.cli --version  # or any Python 3.10+ command
 ```
 
 You will get:
@@ -72,6 +84,35 @@ papers/demo-policy-paper/
   v2/
     ...
 ```
+
+Open the generated report:
+
+```bash
+open papers/demo-policy-paper/v1/html/index.html
+```
+
+On Linux, use `xdg-open` instead of `open`.
+
+## Deploy Checklist For Agents
+
+If an automation agent is asked to "deploy this pipeline", the expected local
+deployment is:
+
+```bash
+sh scripts/deploy_local.sh
+```
+
+That script installs ASL and runs an offline smoke test in a temporary
+directory. To create a real demo project after deployment:
+
+```bash
+. .venv/bin/activate
+asl init --slug demo-policy-paper --title "Demo Policy Paper" --topic "a policy question that still needs verified evidence" --brief-file examples/topic_brief.md
+asl run papers/demo-policy-paper --cycles 1 --offline
+```
+
+Do not provision Docker, databases, queues, cloud hosts, or background services
+unless explicitly requested. `asl ui` is optional and starts a local web UI.
 
 ## Data And References
 
