@@ -159,6 +159,8 @@ class PaperPipeline:
         web_research_settings: WebResearchSettings | None = None,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
         prompt_budget: int = DRAFT_PROMPT_BUDGET,
+        from_version: str | None = None,
+        additional_context: str | None = None,
     ) -> None:
         self.project_dir = project_dir.resolve()
         self.client = client or LLMClient()
@@ -200,11 +202,14 @@ class PaperPipeline:
         self.web_research_settings = web_research_settings or WebResearchSettings()
         self.progress_callback = progress_callback
         self.prompt_budget = prompt_budget
+        self.from_version = from_version
+        self.additional_context = additional_context
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
         self._ensure_seed_baseline()
         total_cycles = max(1, cycles)
+        baseline_override = _resolve_from_version(self.project_dir, self.from_version)
         for index in range(total_cycles):
             self._emit_progress(
                 "cycle_start",
@@ -212,10 +217,13 @@ class PaperPipeline:
                 cycle=index + 1,
                 total_cycles=total_cycles,
             )
-            created.append(self._run_one_cycle(reviewers, cycle=index + 1, total_cycles=total_cycles))
+            created.append(self._run_one_cycle(
+                reviewers, cycle=index + 1, total_cycles=total_cycles,
+                override_baseline_dir=baseline_override if index == 0 else None,
+            ))
         return created
 
-    def _run_one_cycle(self, reviewers: tuple[str, ...], cycle: int = 1, total_cycles: int = 1) -> Path:
+    def _run_one_cycle(self, reviewers: tuple[str, ...], cycle: int = 1, total_cycles: int = 1, override_baseline_dir: Path | None = None) -> Path:
         version = next_version(self.project_dir)
         version_dir = self.project_dir / f"v{version}"
         self._emit_progress(
@@ -225,20 +233,22 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
-        previous_dir = accepted_version(self.project_dir)
+        accepted_dir = accepted_version(self.project_dir)
+        accepted_draft = read_text(accepted_dir / "draft.md") if accepted_dir and (accepted_dir / "draft.md").exists() else None
+        baseline_dir = override_baseline_dir or accepted_dir
         previous_draft = None
         loaded_seed_draft = None
         previous_draft_source = None
-        if previous_dir and previous_dir != version_dir and (previous_dir / "draft.md").exists():
+        if baseline_dir and baseline_dir != version_dir and (baseline_dir / "draft.md").exists():
             self._emit_progress(
                 "previous_draft",
-                f"Reading accepted draft from {previous_dir.name}",
+                f"Reading baseline draft from {baseline_dir.name}",
                 cycle=cycle,
                 total_cycles=total_cycles,
                 version=version_dir.name,
             )
-            previous_draft = read_text(previous_dir / "draft.md")
-            previous_draft_source = "accepted_version"
+            previous_draft = read_text(baseline_dir / "draft.md")
+            previous_draft_source = "accepted_version" if baseline_dir == accepted_dir else f"version_{baseline_dir.name}"
         elif self.start_mode == "rewrite" and self.seed_draft_path and self.seed_draft_path.exists():
             self._emit_progress(
                 "seed_draft",
@@ -260,6 +270,8 @@ class PaperPipeline:
         loaded_inputs = self._load_inputs(version_dir)
         self._write_smart_loader_manifest(version_dir, loaded_seed_draft, loaded_inputs)
         brief = append_context_to_brief(self.brief, loaded_inputs)
+        if self.additional_context:
+            brief = f"{brief}\n\n## Additional Guidance\n\n{self.additional_context.strip()}"
         working_manifest = dict(self.manifest)
         self._emit_progress(
             "topic_discovery",
@@ -293,7 +305,7 @@ class PaperPipeline:
             _prompt_record(
                 working_manifest,
                 brief,
-                previous_dir.name if previous_dir else None,
+                baseline_dir.name if baseline_dir else None,
                 loaded_inputs,
                 self.start_mode,
             ),
@@ -321,10 +333,10 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
-        is_iterative = _is_iterative_cycle(previous_dir)
+        is_iterative = _is_iterative_cycle(baseline_dir)
         if is_iterative:
-            review_summary = _read_previous_reviews(previous_dir)
-            revision_plan_text = _read_previous_revision_plan(previous_dir)
+            review_summary = _read_previous_reviews(baseline_dir)
+            revision_plan_text = _read_previous_revision_plan(baseline_dir)
             review_cost = min(len(review_summary), 4000) + min(len(revision_plan_text), 3000)
             iterative_budget = self.prompt_budget + review_cost + 8000
             draft_brief = _trim_brief_for_budget(
@@ -392,7 +404,7 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
-        quality_gate = self._quality_gate(working_manifest, previous_dir, previous_draft, draft, version_dir)
+        quality_gate = self._quality_gate(working_manifest, accepted_dir, accepted_draft, draft, version_dir)
         if quality_gate["accepted"]:
             write_accepted_version(self.project_dir, version_dir)
 
@@ -407,8 +419,8 @@ class PaperPipeline:
             "schema": "academic-sludge-line.version.v1",
             "version": version,
             "created_at": utc_now(),
-            "previous_version": previous_dir.name if previous_dir else None,
-            "previous_accepted_version": previous_dir.name if previous_dir else None,
+            "previous_version": baseline_dir.name if baseline_dir else None,
+            "previous_accepted_version": accepted_dir.name if accepted_dir else None,
             "previous_draft_source": previous_draft_source,
             "start_mode": self.start_mode,
             "accepted": quality_gate["accepted"],
@@ -877,6 +889,16 @@ def _trim_brief_for_budget(
         clipped = ref_section[:ref_budget].rstrip()
         return f"{base_brief}{marker}{clipped}\n\n[TRUNCATED: {len(ref_section) - ref_budget} characters omitted to fit model context]"
     return brief[:available].rstrip()
+
+
+def _resolve_from_version(project_dir: Path, from_version: str | None) -> Path | None:
+    if not from_version:
+        return None
+    name = from_version.lstrip("vV")
+    candidate = project_dir / f"v{name}"
+    if candidate.is_dir() and (candidate / "draft.md").exists():
+        return candidate
+    raise ValueError(f"version {from_version} not found in {project_dir}")
 
 
 def _is_iterative_cycle(previous_dir: Path | None) -> bool:

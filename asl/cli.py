@@ -100,6 +100,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=DRAFT_PROMPT_BUDGET,
         help=f"maximum chars for the draft prompt (default: {DRAFT_PROMPT_BUDGET})",
     )
+    run.add_argument(
+        "--from",
+        dest="from_version",
+        help="start from a specific version (e.g. v2) instead of the accepted version",
+    )
+    run.add_argument(
+        "--focus",
+        dest="additional_context",
+        help="additional guidance or context to inject into the next draft",
+    )
 
     ui = sub.add_parser("ui", help="start the local web UI")
     ui.add_argument("--host", default="127.0.0.1", help="host to bind")
@@ -152,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
             seed_draft_path=args.seed_draft_file,
             web_research_settings=_web_research_settings_from_args(args),
             prompt_budget=args.max_prompt_chars,
+            from_version=args.from_version,
+            additional_context=args.additional_context,
         )
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
