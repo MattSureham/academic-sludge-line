@@ -20,3 +20,6 @@ asl/_vendor/smart-loader/node_modules/
 # Generated paper workspaces are archived outside this code repository.
 papers/
 outputs/
+
+# Local agent handoff notes can contain run-specific context.
+HANDOFF.md

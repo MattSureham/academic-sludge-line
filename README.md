@@ -226,13 +226,29 @@ or turn off Terminal providers in the Web UI to prevent ASL from spawning them.
 Start the local UI:
 
 ```bash
-asl ui
+asl ui --port 8765
 ```
 
 Then open:
 
 ```text
 http://127.0.0.1:8765
+```
+
+Useful local UI commands:
+
+```bash
+# Stop anything currently listening on the UI port. Linux/GNU xargs:
+lsof -tiTCP:8765 -sTCP:LISTEN | xargs -r kill
+
+# macOS-safe equivalent:
+pids=$(lsof -tiTCP:8765 -sTCP:LISTEN); [ -n "$pids" ] && kill $pids
+
+# Start the UI on the standard local port.
+asl ui --port 8765
+
+# Equivalent no-install form from the repository root.
+python3 -m asl.cli ui --port 8765
 ```
 
 The UI can create paper workspaces, select models for each pipeline stage, add
