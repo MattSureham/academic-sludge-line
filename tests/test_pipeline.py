@@ -886,6 +886,45 @@ def test_worse_candidate_is_kept_but_not_accepted(tmp_path: Path) -> None:
     assert metadata["models"]["used"]["score"][0]["model"] == "worse-scorer"
 
 
+def test_fallback_candidate_never_replaces_previous_accepted(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="fallback-gate",
+        title="Fallback Gate",
+        topic="fallback candidates",
+        brief="Preserve accepted drafts.",
+    )
+    first = PaperPipeline(project, client=LLMClient(offline=True)).run()[0]
+
+    second = PaperPipeline(project, client=_FallbackCandidateClient()).run()[0]
+
+    assert (project / "accepted_version.txt").read_text(encoding="utf-8").strip() == first.name
+    metadata = read_json(second / "metadata.json")
+    assert metadata["accepted"] is False
+    assert metadata["quality_gate"]["decision"] == "rejected"
+    assert "offline fallback" in metadata["quality_gate"]["reason"]
+
+
+def test_missing_score_model_does_not_replace_previous_accepted(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="score-gate",
+        title="Score Gate",
+        topic="score model availability",
+        brief="Preserve accepted drafts.",
+    )
+    first = PaperPipeline(project, client=LLMClient(offline=True)).run()[0]
+
+    second = PaperPipeline(project, client=_MissingScoreClient()).run()[0]
+
+    assert (project / "accepted_version.txt").read_text(encoding="utf-8").strip() == first.name
+    metadata = read_json(second / "metadata.json")
+    assert metadata["accepted"] is False
+    assert metadata["quality_gate"]["decision"] == "rejected"
+    assert "scoring model" in metadata["quality_gate"]["reason"]
+    assert metadata["models"]["used"]["score"][0]["provider"] == "offline"
+
+
 def test_empty_brief_can_run_offline(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path,
@@ -1024,6 +1063,60 @@ class _WorseCandidateClient:
                     text='{"verdict":"worse","previous_score":8,"candidate_score":2,"rationale":"Less complete."}',
                     provider="fake",
                     model="worse-scorer",
+                )
+            ]
+        return [self.generate(prompt, fallback, role=role)]
+
+
+class _FallbackCandidateClient:
+    def with_model_routes(self, routes: dict[str, str]) -> "_FallbackCandidateClient":
+        return self
+
+    def route_metadata(self) -> dict[str, list[str]]:
+        return {"draft": ["fake:failing-writer"], "score": ["fake:score"]}
+
+    def generate(self, prompt: str, fallback: str, role: str = "default") -> LLMResult:
+        if role == "draft":
+            return LLMResult(
+                text="# Template Draft\n\nThis is fallback.",
+                provider="offline-after-error",
+                model="template",
+                attempts=("fake:failing-writer: ValueError: failed",),
+            )
+        return LLMResult(text=fallback, provider="fake", model=f"{role}-fallback")
+
+    def generate_all(self, prompt: str, fallback: str, role: str) -> list[LLMResult]:
+        if role == "score":
+            return [
+                LLMResult(
+                    text='{"verdict":"better","previous_score":4,"candidate_score":9,"rationale":"Looks structured."}',
+                    provider="fake",
+                    model="score",
+                )
+            ]
+        return [self.generate(prompt, fallback, role=role)]
+
+
+class _MissingScoreClient:
+    def with_model_routes(self, routes: dict[str, str]) -> "_MissingScoreClient":
+        return self
+
+    def route_metadata(self) -> dict[str, list[str]]:
+        return {"draft": ["fake:writer"], "score": ["missing:score"]}
+
+    def generate(self, prompt: str, fallback: str, role: str = "default") -> LLMResult:
+        if role == "draft":
+            return LLMResult(text="# Real Candidate\n\nA real model wrote this.", provider="fake", model="writer")
+        return LLMResult(text=fallback, provider="fake", model=f"{role}-fallback")
+
+    def generate_all(self, prompt: str, fallback: str, role: str) -> list[LLMResult]:
+        if role == "score":
+            return [
+                LLMResult(
+                    text='{"verdict":"better","previous_score":4,"candidate_score":9,"rationale":"Offline heuristic."}',
+                    provider="offline",
+                    model="template",
+                    attempts=("missing:score: missing credentials or endpoint",),
                 )
             ]
         return [self.generate(prompt, fallback, role=role)]

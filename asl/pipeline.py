@@ -367,7 +367,7 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
-        quality_gate = self._quality_gate(working_manifest, previous_dir, previous_draft, draft.text, version_dir)
+        quality_gate = self._quality_gate(working_manifest, previous_dir, previous_draft, draft, version_dir)
         if quality_gate["accepted"]:
             write_accepted_version(self.project_dir, version_dir)
 
@@ -590,9 +590,10 @@ class PaperPipeline:
         manifest: dict,
         previous_dir: Path | None,
         previous_draft: str | None,
-        candidate_draft: str,
+        candidate: object,
         version_dir: Path,
     ) -> dict:
+        candidate_draft = getattr(candidate, "text", "")
         if not previous_draft:
             return {
                 "accepted": True,
@@ -602,10 +603,35 @@ class PaperPipeline:
                 "scores": [],
             }
 
+        candidate_model = _result_metadata(candidate)
+        if _is_fallback_result(candidate_model):
+            gate = {
+                "accepted": False,
+                "decision": "rejected",
+                "reason": "candidate draft used an offline fallback after model failure; preserving previous accepted draft",
+                "previous_version": previous_dir.name if previous_dir else None,
+                "candidate_model": candidate_model,
+                "scores": [],
+            }
+            write_json(version_dir / "quality_scores.json", gate)
+            return gate
+
         prompt = score_prompt(manifest, previous_draft, candidate_draft)
         fallback = offline_score(manifest, previous_draft, candidate_draft)
         results = _generate_all(self.client, prompt, fallback, role="score")
         scores = [_score_metadata(result) for result in results]
+        if not any(not _is_fallback_result(score) for score in scores):
+            gate = {
+                "accepted": False,
+                "decision": "rejected",
+                "reason": "no configured scoring model completed; preserving previous accepted draft",
+                "previous_version": previous_dir.name if previous_dir else None,
+                "candidate_model": candidate_model,
+                "scores": scores,
+            }
+            write_json(version_dir / "quality_scores.json", gate)
+            return gate
+
         better_or_same = sum(1 for score in scores if score["verdict"] in {"better", "same"})
         worse = sum(1 for score in scores if score["verdict"] == "worse")
         accepted = better_or_same >= worse
@@ -615,6 +641,7 @@ class PaperPipeline:
             "decision": decision,
             "reason": "candidate is not worse than previous accepted draft" if accepted else "candidate scored worse than previous accepted draft",
             "previous_version": previous_dir.name if previous_dir else None,
+            "candidate_model": candidate_model,
             "scores": scores,
         }
         write_json(version_dir / "quality_scores.json", gate)
@@ -753,6 +780,10 @@ def _result_metadata(result: object) -> dict[str, object]:
         "model": getattr(result, "model", "unknown"),
         "attempts": list(getattr(result, "attempts", ())),
     }
+
+
+def _is_fallback_result(result: dict[str, object]) -> bool:
+    return str(result.get("provider", "")).lower() in {"offline", "offline-after-error", "template"}
 
 
 def _score_metadata(result: object) -> dict[str, object]:
