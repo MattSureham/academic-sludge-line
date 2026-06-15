@@ -234,14 +234,24 @@ http://127.0.0.1:8765
 ```
 
 The UI can create paper workspaces, select models for each pipeline stage, add
-data/reference paths, run cycles, and preview generated outputs. It uses the same
-provider/model catalog as the CLI and defaults the local OpenAI-compatible vLLM
-preset to `http://127.0.0.1:8000/v1`.
+data/reference paths, run iterations, and preview generated outputs. One UI
+iteration creates one new `vN` version and runs the full plan/draft/review/
+revision/score/render sequence. It uses the same provider/model catalog as the
+CLI and defaults the local OpenAI-compatible vLLM preset to
+`http://127.0.0.1:8000/v1`.
+
+For rewrite projects, the first run imports the seed draft as the accepted `v1`
+baseline before any model rewriting. The first requested iteration then creates
+`v2`, so the original draft remains visible and comparable.
 
 In the New Paper tab, `Workspace root` is the parent directory where ASL creates
 `papers/<slug>/`. The Run tab's `Project path` points to one existing
-`papers/<slug>/` project directory. Path fields include a local browser for
-choosing files or folders and creating new folders before selecting a path.
+`papers/<slug>/` project directory, or to a new/empty folder that should be
+auto-created when you click Run. If a seed draft is supplied while auto-creating,
+the UI defaults the new project to rewrite mode and infers the title/topic from
+the seed draft's heading or PDF metadata when possible. Path fields include a
+local browser for choosing files or folders and creating new folders before
+selecting a path.
 
 ## Starting Modes And Quality Gate
 
@@ -296,7 +306,9 @@ Score details are written to `quality_scores.json` and `metadata.json`.
 
 ## LLM Mode And Model Routing
 
-Offline mode is the default safest path for tests and demos. To use an LLM:
+CLI examples and tests often use `--offline` for reproducibility. In the Web UI,
+Offline is off by default so selected providers can run. To use an LLM from the
+CLI:
 
 ```bash
 export OPENAI_API_KEY="..."

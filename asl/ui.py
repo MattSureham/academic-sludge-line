@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import tempfile
 import threading
 import time
 import traceback
@@ -18,8 +19,8 @@ from urllib.parse import parse_qs, urlparse
 from . import __version__
 from .catalog import catalog_payload
 from .llm import LLMClient
-from .pipeline import DEFAULT_REVIEWERS, PaperPipeline, init_project
-from .smart_loader import SmartLoaderSettings
+from .pipeline import DEFAULT_REVIEWERS, PaperPipeline, init_project, init_project_at
+from .smart_loader import SmartLoader, SmartLoaderSettings
 from .web_research import WebResearchSettings
 from .workspace import read_json, read_text
 
@@ -48,44 +49,47 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
-            if parsed.path == "/":
-                self._send_html(_INDEX_HTML)
-                return
-            if parsed.path == "/app.css":
-                self._send_text(_APP_CSS, "text/css; charset=utf-8")
-                return
-            if parsed.path == "/app.js":
-                self._send_text(_APP_JS, "text/javascript; charset=utf-8")
-                return
-            if parsed.path == "/api/catalog":
-                self._send_json({"cwd": str(cwd), "home": str(Path.home()), **catalog_payload()})
-                return
-            if parsed.path == "/api/browse":
-                params = parse_qs(parsed.query)
-                path_value = params.get("path", [str(cwd)])[0]
-                path = _resolve_path(path_value or str(cwd), cwd)
-                self._send_json(_browse_payload(path, cwd))
-                return
-            if parsed.path == "/api/projects":
-                params = parse_qs(parsed.query)
-                root = _resolve_path(params.get("root", [str(cwd)])[0], cwd)
-                self._send_json({"root": str(root), "projects": _list_projects(root)})
-                return
-            if parsed.path == "/api/project":
-                params = parse_qs(parsed.query)
-                project_dir = _resolve_path(params.get("projectDir", [""])[0], cwd)
-                self._send_json(_project_payload(project_dir))
-                return
-            if parsed.path.startswith("/api/jobs/"):
-                job_id = parsed.path.rsplit("/", 1)[-1]
-                with jobs_lock:
-                    job = jobs.get(job_id)
-                if not job:
-                    self._send_json({"error": "job not found"}, HTTPStatus.NOT_FOUND)
+            try:
+                if parsed.path == "/":
+                    self._send_html(_INDEX_HTML)
                     return
-                self._send_json(job.snapshot())
-                return
-            self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                if parsed.path == "/app.css":
+                    self._send_text(_APP_CSS, "text/css; charset=utf-8")
+                    return
+                if parsed.path == "/app.js":
+                    self._send_text(_APP_JS, "text/javascript; charset=utf-8")
+                    return
+                if parsed.path == "/api/catalog":
+                    self._send_json({"cwd": str(cwd), "home": str(Path.home()), **catalog_payload()})
+                    return
+                if parsed.path == "/api/browse":
+                    params = parse_qs(parsed.query)
+                    path_value = params.get("path", [str(cwd)])[0]
+                    path = _resolve_path(path_value or str(cwd), cwd)
+                    self._send_json(_browse_payload(path, cwd))
+                    return
+                if parsed.path == "/api/projects":
+                    params = parse_qs(parsed.query)
+                    root = _resolve_path(params.get("root", [str(cwd)])[0], cwd)
+                    self._send_json({"root": str(root), "projects": _list_projects(root)})
+                    return
+                if parsed.path == "/api/project":
+                    params = parse_qs(parsed.query)
+                    project_dir = _resolve_path(params.get("projectDir", [""])[0], cwd)
+                    self._send_json(_project_payload(project_dir))
+                    return
+                if parsed.path.startswith("/api/jobs/"):
+                    job_id = parsed.path.rsplit("/", 1)[-1]
+                    with jobs_lock:
+                        job = jobs.get(job_id)
+                    if not job:
+                        self._send_json({"error": "job not found"}, HTTPStatus.NOT_FOUND)
+                        return
+                    self._send_json(job.snapshot())
+                    return
+                self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            except Exception as exc:  # noqa: BLE001 - UI should return readable failures.
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
@@ -241,8 +245,9 @@ def _start_run_job(
     project_jobs: dict[str, str],
     jobs_lock: threading.Lock,
 ) -> dict:
-    project_dir = _resolve_path(payload["projectDir"], cwd)
+    project_dir = _project_dir_from_payload(payload, cwd)
     project_key = str(project_dir)
+    run_payload = dict(payload)
     with jobs_lock:
         existing_id = project_jobs.get(project_key)
         existing = jobs.get(existing_id or "")
@@ -251,14 +256,19 @@ def _start_run_job(
         if existing_id:
             project_jobs.pop(project_key, None)
 
+        created_project = _ensure_project_for_run(project_dir, payload, cwd)
+        if created_project:
+            run_payload["_inputsPersistedInAutoProject"] = True
         job = _RunJob(uuid.uuid4().hex[:12], project_dir)
         jobs[job.id] = job
         project_jobs[project_key] = job.id
+        if created_project:
+            job.update({"stage": "project_create", "message": f"Created project at {project_dir}"})
 
     def worker() -> None:
         job.mark_running()
         try:
-            result = _run_project(payload, cwd, progress=job.update)
+            result = _run_project(run_payload, cwd, progress=job.update)
         except Exception as exc:  # noqa: BLE001 - surfaced to the local UI.
             job.fail(str(exc), traceback.format_exc())
         else:
@@ -274,7 +284,11 @@ def _start_run_job(
 
 
 def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]], None] | None = None) -> dict:
-    project_dir = _resolve_path(payload["projectDir"], cwd)
+    project_dir = _project_dir_from_payload(payload, cwd)
+    created_project = False
+    if not payload.get("_inputsPersistedInAutoProject"):
+        created_project = _ensure_project_for_run(project_dir, payload, cwd)
+    inputs_persisted = bool(payload.get("_inputsPersistedInAutoProject") or created_project)
     reviewers = tuple(_split_csv(payload.get("reviewers")) or DEFAULT_REVIEWERS)
     pipeline = PaperPipeline(
         project_dir,
@@ -282,8 +296,8 @@ def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]
             offline=bool(payload.get("offline")),
             allow_agent_tools=bool(payload.get("allowAgentTools")),
         ),
-        data_paths=tuple(Path(path) for path in _split_paths(payload.get("data"))),
-        reference_paths=tuple(Path(path) for path in _split_paths(payload.get("references"))),
+        data_paths=() if inputs_persisted else tuple(Path(path) for path in _split_paths(payload.get("data"))),
+        reference_paths=() if inputs_persisted else tuple(Path(path) for path in _split_paths(payload.get("references"))),
         smart_loader_path=Path(payload["smartLoader"]) if payload.get("smartLoader") else None,
         smart_loader_settings=_loader_settings(payload.get("loader", {})),
         model_routes=_model_routes(payload.get("models", {})),
@@ -341,9 +355,7 @@ def _create_directory(payload: dict, cwd: Path) -> dict:
 
 
 def _project_payload(project_dir: Path) -> dict:
-    manifest_path = project_dir / "project.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"project.json not found: {project_dir}")
+    manifest_path = _require_project_manifest(project_dir)
 
     versions = []
     for child in sorted(project_dir.iterdir(), key=lambda path: path.name):
@@ -429,6 +441,186 @@ def _accepted_marker(project_dir: Path) -> str | None:
         return None
     value = marker.read_text(encoding="utf-8").strip()
     return value or None
+
+
+def _project_dir_from_payload(payload: dict, cwd: Path) -> Path:
+    value = str(payload.get("projectDir") or "").strip()
+    if not value:
+        raise ValueError(
+            "Project path is required. Enter a new papers/<slug> path to auto-create it, "
+            "or select an existing paper project."
+        )
+    return _resolve_path(value, cwd)
+
+
+def _ensure_project_for_run(project_dir: Path, payload: dict, cwd: Path) -> bool:
+    manifest_path = project_dir / "project.json"
+    if manifest_path.exists():
+        return False
+    if project_dir.exists():
+        if not project_dir.is_dir():
+            raise NotADirectoryError(f"Project path is not a folder: {project_dir}")
+        if any(project_dir.iterdir()):
+            raise FileNotFoundError(
+                f"{project_dir} is not an ASL paper project because project.json is missing. "
+                "Choose a new or empty project folder to auto-create, or use New Paper to configure it."
+            )
+
+    start_mode = _auto_project_start_mode(payload)
+    title = _auto_project_title(project_dir, payload)
+    topic = None if start_mode == "discover-topic" else title
+    init_project_at(
+        project_dir,
+        title=title,
+        topic=topic,
+        brief=_auto_project_brief(start_mode),
+        data_paths=tuple(Path(path) for path in _split_paths(payload.get("data"))),
+        reference_paths=tuple(Path(path) for path in _split_paths(payload.get("references"))),
+        model_routes=_model_routes(payload.get("models", {})),
+        start_mode=start_mode,
+        seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
+        input_root=cwd,
+        allow_existing_empty=True,
+    )
+    return True
+
+
+def _auto_project_start_mode(payload: dict) -> str:
+    value = str(payload.get("startMode") or "").strip()
+    if value:
+        return value
+    if payload.get("seedDraftFile"):
+        return "rewrite"
+    return "from-scratch"
+
+
+def _auto_project_title(project_dir: Path, payload: dict) -> str:
+    seed_draft = payload.get("seedDraftFile")
+    if seed_draft:
+        inferred = _infer_seed_draft_title(Path(seed_draft), payload)
+        if inferred:
+            return inferred
+    return _title_from_project_path(project_dir)
+
+
+def _infer_seed_draft_title(seed_draft: Path, payload: dict) -> str | None:
+    if not seed_draft.exists():
+        return None
+    text_suffixes = {".md", ".markdown", ".txt", ".tex", ".rst"}
+    if seed_draft.suffix.lower() in text_suffixes:
+        try:
+            title = _title_from_markdownish_text(read_text(seed_draft))
+        except UnicodeDecodeError:
+            title = None
+        if title:
+            return title
+
+    try:
+        loader_settings = _loader_settings(payload.get("loader", {}))
+        title_settings = SmartLoaderSettings(
+            pdf_render_pages=False,
+            pdf_max_pages=loader_settings.pdf_max_pages,
+            pdf_dpi=loader_settings.pdf_dpi,
+            ocr_assets=False,
+            ocr_language=loader_settings.ocr_language,
+        )
+        loader = SmartLoader(
+            Path(payload["smartLoader"]) if payload.get("smartLoader") else None,
+            settings=title_settings,
+        )
+        with tempfile.TemporaryDirectory(prefix="asl-seed-title-") as tmp:
+            group = loader.load_group("seed_draft", [seed_draft], Path(tmp))
+    except Exception:
+        return None
+    return _title_from_loaded_seed_group(group)
+
+
+def _title_from_loaded_seed_group(group: object) -> str | None:
+    results = getattr(group, "results", ())
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        for document in result.get("documents", []):
+            if not isinstance(document, dict):
+                continue
+            for candidate in (
+                document.get("title"),
+                _pdf_metadata_title(document),
+                _title_from_markdownish_text(str(document.get("markdown") or document.get("text") or "")),
+            ):
+                title = _clean_title(candidate)
+                if title:
+                    return title
+    return None
+
+
+def _pdf_metadata_title(document: dict) -> object:
+    metadata = document.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    info = metadata.get("info")
+    if isinstance(info, dict):
+        return info.get("Title")
+    return None
+
+
+def _title_from_markdownish_text(text: str) -> str | None:
+    lines = [line.strip() for line in text.splitlines()[:80] if line.strip()]
+    for line in lines:
+        if line.startswith("#"):
+            return _clean_title(line.lstrip("#").strip())
+    for line in lines[:12]:
+        title = _clean_title(line)
+        if title and len(title) >= 8:
+            return title
+    return None
+
+
+def _title_from_project_path(project_dir: Path) -> str:
+    name = project_dir.name.replace("-", " ").replace("_", " ").strip()
+    return name.title() if name else "Untitled Paper"
+
+
+def _clean_title(value: object) -> str | None:
+    title = " ".join(str(value or "").strip().split())
+    if not title:
+        return None
+    title = title.strip("#:;,- ")
+    if not title or title.lower() in {"untitled", "loaded seed draft"}:
+        return None
+    return title[:220]
+
+
+def _auto_project_brief(start_mode: str) -> str:
+    if start_mode == "discover-topic":
+        return (
+            "Identify a viable academic paper topic from the supplied data and references. "
+            "Do not fabricate citations or results; mark missing evidence as TODO."
+        )
+    if start_mode == "rewrite":
+        return (
+            "Rewrite and improve the supplied draft using the supplied data and references. "
+            "Do not fabricate citations or results; mark missing evidence as TODO."
+        )
+    return (
+        "Write a rigorous academic paper using the supplied data and references. "
+        "Do not fabricate citations or results; mark missing evidence as TODO."
+    )
+
+
+def _require_project_manifest(project_dir: Path) -> Path:
+    manifest_path = project_dir / "project.json"
+    help_text = (
+        "Click Run with a new or empty project path to auto-create it, or choose an "
+        "existing papers/<slug> folder that contains project.json."
+    )
+    if not project_dir.exists():
+        raise FileNotFoundError(f"Paper project not found: {project_dir}. {help_text}")
+    if not project_dir.is_dir():
+        raise NotADirectoryError(f"Project path is not a folder: {project_dir}. {help_text}")
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Paper project manifest is missing: {manifest_path}. {help_text}")
+    return manifest_path
 
 
 def _resolve_path(value: str, cwd: Path) -> Path:
@@ -540,10 +732,12 @@ _INDEX_HTML = """<!doctype html>
             <input id="runProjectDir" name="projectDir" autocomplete="off" required>
             <button type="button" class="browse-btn" data-target="runProjectDir" data-mode="dir">Browse</button>
           </div>
+          <span class="field-note">Choose an existing project, or enter a new/empty path and Run will auto-create it.</span>
         </label>
         <div class="inline-fields">
-          <label>Cycles
+          <label>Iterations
             <input id="cycles" name="cycles" type="number" min="1" value="1">
+            <span class="field-note">1 iteration creates 1 new version.</span>
           </label>
           <label>Reviewers
             <input id="reviewers" name="reviewers" value="methods,evidence,style">
@@ -566,7 +760,7 @@ _INDEX_HTML = """<!doctype html>
           </label>
         </div>
         <label class="checkline">
-          <input id="offline" name="offline" type="checkbox" checked>
+          <input id="offline" name="offline" type="checkbox">
           Offline
         </label>
         <div class="check-grid">
@@ -876,6 +1070,13 @@ label {
   gap: 3px;
 }
 
+.field-note {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
 .required-star {
   color: #dc2626;
   font-weight: 900;
@@ -1075,6 +1276,25 @@ textarea {
   gap: 8px;
   margin-bottom: 14px;
   color: var(--muted);
+}
+
+.model-summary {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 10px;
+  color: var(--ink);
+}
+
+.model-summary ul {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .provider-list {
@@ -1368,7 +1588,10 @@ const $ = (id) => document.getElementById(id);
 
 const RUN_STAGE_PROGRESS = {
   queued: 0,
+  project_create: 1,
   running: 2,
+  seed_baseline: 2,
+  seed_baseline_complete: 3,
   cycle_start: 4,
   version_prepare: 7,
   previous_draft: 10,
@@ -1424,7 +1647,7 @@ function renderRunJob(job) {
   const panel = $("runFeedback");
   panel.hidden = false;
   const progress = job.progress || {};
-  const cycle = progress.cycle && progress.total_cycles ? `cycle ${progress.cycle}/${progress.total_cycles}` : job.status;
+  const cycle = progress.cycle && progress.total_cycles ? `iteration ${progress.cycle}/${progress.total_cycles}` : job.status;
   const version = progress.version ? ` · ${progress.version}` : "";
   const elapsed = typeof job.elapsedSeconds === "number" ? `${job.elapsedSeconds.toFixed(1)}s` : "";
   $("runFeedbackTitle").textContent = `Pipeline ${job.status}`;
@@ -1438,12 +1661,16 @@ function renderRunJob(job) {
     const item = document.createElement("li");
     const stage = document.createElement("span");
     stage.className = "event-stage";
-    stage.textContent = `${String(event.stage || "stage").replaceAll("_", " ")}:`;
+    stage.textContent = `${eventStageLabel(event.stage)}:`;
     const message = document.createElement("span");
     message.textContent = event.message || "";
     item.append(stage, message);
     events.appendChild(item);
   }
+}
+
+function eventStageLabel(stage) {
+  return String(stage || "stage").replaceAll("_", " ").replace(/^cycle\\b/, "iteration");
 }
 
 function stopRunPolling() {
@@ -1472,7 +1699,12 @@ async function pollRunJob(jobId) {
   state.activeRunJobId = null;
   setRunControls(false);
   if (job.status === "succeeded") {
-    if (job.result?.project) renderProject(job.result.project);
+    if (job.result?.project) {
+      $("runProjectDir").value = job.result.project.path;
+      await loadProjects();
+      $("projectSelect").value = job.result.project.path;
+      renderProject(job.result.project);
+    }
     setStatus("Done");
     return;
   }
@@ -1562,24 +1794,144 @@ async function loadProjects() {
 
 async function loadProject(projectDir) {
   if (!projectDir) return;
-  state.currentProject = await api(`/api/project?projectDir=${encodeURIComponent(projectDir)}`);
-  renderProject(state.currentProject);
+  try {
+    state.currentProject = await api(`/api/project?projectDir=${encodeURIComponent(projectDir)}`);
+    renderProject(state.currentProject);
+  } catch (error) {
+    if (isMissingProjectError(error)) {
+      state.currentProject = null;
+      renderPendingProject(projectDir);
+      setStatus("Ready");
+      return;
+    }
+    throw error;
+  }
 }
 
 function renderProject(project) {
   const manifest = project.manifest || {};
   const latest = project.latest || {};
   state.latestFiles = latest.files || {};
-  const htmlLine = latest.htmlIndex ? `<div>HTML: <code>${latest.htmlIndex}</code></div>` : "";
-  $("projectSummary").innerHTML = `
-    <div><strong>${manifest.title || "Untitled"}</strong></div>
-    <div>${manifest.topic || ""}</div>
-    <div>${project.path}</div>
-    <div>${project.versions.length} version(s)</div>
-    <div>Accepted: ${project.acceptedVersion || "none yet"}</div>
-    ${htmlLine}
-  `;
+  const summary = $("projectSummary");
+  summary.innerHTML = "";
+  const titleLine = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = manifest.title || "Untitled";
+  titleLine.appendChild(title);
+  summary.appendChild(titleLine);
+  for (const text of [
+    manifest.topic || "",
+    project.path,
+    `${project.versions.length} version(s)`,
+    `Accepted: ${project.acceptedVersion || "none yet"}`,
+  ]) {
+    const line = document.createElement("div");
+    line.textContent = text;
+    summary.appendChild(line);
+  }
+  if (latest.htmlIndex) {
+    const htmlLine = document.createElement("div");
+    htmlLine.append("HTML: ");
+    const code = document.createElement("code");
+    code.textContent = latest.htmlIndex;
+    htmlLine.appendChild(code);
+    summary.appendChild(htmlLine);
+  }
+  const modelSummary = renderModelSummary(latest);
+  if (modelSummary) summary.appendChild(modelSummary);
   renderFileTabs();
+}
+
+function renderModelSummary(latest) {
+  const metadata = parseJsonFile(latest?.files?.["metadata.json"] || latest?.files?.metadata);
+  const models = metadata?.models;
+  if (!models) return null;
+  const box = document.createElement("div");
+  box.className = "model-summary";
+  const heading = document.createElement("strong");
+  heading.textContent = "Model usage";
+  box.appendChild(heading);
+  const list = document.createElement("ul");
+  for (const line of modelUsageLines(models)) {
+    const item = document.createElement("li");
+    item.textContent = line;
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  return box;
+}
+
+function modelUsageLines(models) {
+  const requested = models.requested || {};
+  const used = models.used || {};
+  const lines = [];
+  for (const role of ["plan", "draft", "review", "revision", "score"]) {
+    const requestedLine = (requested[role] || []).join(", ") || "default";
+    const usedValue = used[role] || (role === "review" ? used.reviews : null);
+    lines.push(`${role}: requested ${requestedLine}; ${formatUsedModel(usedValue)}`);
+  }
+  return lines;
+}
+
+function formatUsedModel(value) {
+  if (!value) return "not run";
+  if (Array.isArray(value)) {
+    if (!value.length) return "not run";
+    return value.map((item) => formatSingleModel(item)).join(" | ");
+  }
+  if (typeof value === "object" && !("provider" in value) && !("model" in value)) {
+    const entries = Object.entries(value);
+    if (!entries.length) return "not run";
+    return entries.map(([name, item]) => `${name} ${formatSingleModel(item)}`).join(" | ");
+  }
+  return formatSingleModel(value);
+}
+
+function formatSingleModel(item) {
+  if (!item || typeof item !== "object") return "not run";
+  const provider = item.provider || "unknown";
+  const model = item.model || "unknown";
+  const attempts = Array.isArray(item.attempts) && item.attempts.length
+    ? `; attempts: ${item.attempts.join(" ; ")}`
+    : "";
+  const verdict = item.verdict ? `; verdict: ${item.verdict}` : "";
+  return `used ${provider}:${model}${verdict}${attempts}`;
+}
+
+function parseJsonFile(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function renderPendingProject(projectDir) {
+  state.latestFiles = {};
+  const summary = $("projectSummary");
+  summary.innerHTML = "";
+  for (const text of [
+    "New project",
+    projectDir,
+    "Will be created automatically when you click Run.",
+  ]) {
+    const line = document.createElement("div");
+    if (text === "New project") {
+      const strong = document.createElement("strong");
+      strong.textContent = text;
+      line.appendChild(strong);
+    } else {
+      line.textContent = text;
+    }
+    summary.appendChild(line);
+  }
+  renderFileTabs();
+}
+
+function isMissingProjectError(error) {
+  const message = error?.message || String(error);
+  return message.includes("Paper project not found") || message.includes("Paper project manifest is missing");
 }
 
 function renderFileTabs() {

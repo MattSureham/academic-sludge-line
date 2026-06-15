@@ -70,15 +70,48 @@ def init_project(
     start_mode: str = "from-scratch",
     seed_draft_path: Path | None = None,
 ) -> Path:
+    project_slug = slugify(slug or title)
+    project_dir = root / "papers" / project_slug
+    return init_project_at(
+        project_dir,
+        title=title,
+        topic=topic,
+        brief=brief,
+        research_question=research_question,
+        data_paths=data_paths,
+        reference_paths=reference_paths,
+        model_routes=model_routes,
+        start_mode=start_mode,
+        seed_draft_path=seed_draft_path,
+        input_root=root.resolve(),
+    )
+
+
+def init_project_at(
+    project_dir: Path,
+    title: str,
+    topic: str | None,
+    brief: str,
+    research_question: str | None = None,
+    data_paths: tuple[Path, ...] = (),
+    reference_paths: tuple[Path, ...] = (),
+    model_routes: dict[str, str] | None = None,
+    start_mode: str = "from-scratch",
+    seed_draft_path: Path | None = None,
+    input_root: Path | None = None,
+    allow_existing_empty: bool = False,
+) -> Path:
     if start_mode not in START_MODES:
         raise ValueError(f"unknown start mode: {start_mode}")
     if start_mode != "discover-topic" and not topic:
         raise ValueError("topic is required unless start_mode is discover-topic")
-    input_root = root.resolve()
-    project_slug = slugify(slug or title)
-    project_dir = root / "papers" / project_slug
+    project_dir = project_dir.resolve()
+    input_root = (input_root or _project_root(project_dir)).resolve()
     if project_dir.exists():
-        raise FileExistsError(f"paper project already exists: {project_dir}")
+        if not project_dir.is_dir():
+            raise FileExistsError(f"paper project path is not a directory: {project_dir}")
+        if not allow_existing_empty or any(project_dir.iterdir()):
+            raise FileExistsError(f"paper project already exists: {project_dir}")
 
     manifest = {
         "schema": "academic-sludge-line.paper.v1",
@@ -166,11 +199,12 @@ class PaperPipeline:
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
+        self._ensure_seed_baseline()
         total_cycles = max(1, cycles)
         for index in range(total_cycles):
             self._emit_progress(
                 "cycle_start",
-                f"Starting cycle {index + 1} of {total_cycles}",
+                f"Starting iteration {index + 1} of {total_cycles}",
                 cycle=index + 1,
                 total_cycles=total_cycles,
             )
@@ -364,6 +398,7 @@ class PaperPipeline:
                     "draft": _result_metadata(draft),
                     "reviews": review_models,
                     "revision": _result_metadata(revision),
+                    "score": quality_gate.get("scores", []),
                 },
             },
             "input_loader": {
@@ -392,6 +427,78 @@ class PaperPipeline:
             f"Finished {version_dir.name}",
             cycle=cycle,
             total_cycles=total_cycles,
+            version=version_dir.name,
+        )
+        return version_dir
+
+    def _ensure_seed_baseline(self) -> Path | None:
+        if self.start_mode != "rewrite" or not self.seed_draft_path or not self.seed_draft_path.exists():
+            return None
+        if latest_version(self.project_dir):
+            return None
+
+        version_dir = self.project_dir / "v1"
+        self._emit_progress(
+            "seed_baseline",
+            f"Importing seed draft as {version_dir.name}",
+            version=version_dir.name,
+        )
+        seed_text, loaded_seed_draft = self._load_seed_draft(version_dir)
+        self._write_smart_loader_manifest(version_dir, loaded_seed_draft, [])
+        write_text(version_dir / "draft.md", seed_text)
+        write_text(
+            version_dir / "prompt.md",
+            _seed_baseline_prompt_record(self.manifest, self.seed_draft_path, loaded_seed_draft),
+        )
+        metadata = {
+            "schema": "academic-sludge-line.version.v1",
+            "version": 1,
+            "created_at": utc_now(),
+            "previous_version": None,
+            "previous_accepted_version": None,
+            "previous_draft_source": "seed_draft",
+            "start_mode": self.start_mode,
+            "accepted": True,
+            "imported_seed_baseline": True,
+            "quality_gate": {
+                "accepted": True,
+                "decision": "accepted",
+                "reason": "seed draft imported as rewrite baseline",
+                "previous_version": None,
+                "scores": [],
+            },
+            "provider": "seed-draft",
+            "model": "imported",
+            "reviewers": [],
+            "models": {
+                "requested": _route_metadata(self.client),
+                "used": {},
+            },
+            "input_loader": {
+                "smart_loader": str(self.resolved_smart_loader_path) if self.resolved_smart_loader_path else None,
+                "requested_smart_loader": str(self.smart_loader_path) if self.smart_loader_path else None,
+                "settings": asdict(self.smart_loader_settings),
+            },
+            "web_research": WebResearchResult(
+                enabled=False,
+                provider=self.web_research_settings.provider,
+            ).metadata(),
+            "loaded_seed_draft": loaded_seed_draft.metadata() if loaded_seed_draft else None,
+            "loaded_inputs": [],
+            "outputs": [
+                "prompt.md",
+                "inputs/",
+                "draft.md",
+                "metadata.json",
+                "html/",
+            ],
+        }
+        write_json(version_dir / "metadata.json", metadata)
+        write_accepted_version(self.project_dir, version_dir)
+        render_version_html(version_dir)
+        self._emit_progress(
+            "seed_baseline_complete",
+            f"Imported seed draft as {version_dir.name}",
             version=version_dir.name,
         )
         return version_dir
@@ -447,7 +554,7 @@ class PaperPipeline:
             version_dir / "inputs",
         )
         write_text(version_dir / "inputs" / "seed_draft.md", group.markdown)
-        return group.markdown, group
+        return _loaded_seed_draft_text(group), group
 
     def _write_smart_loader_manifest(
         self,
@@ -554,6 +661,36 @@ Start mode: {start_mode}
 """
 
 
+def _seed_baseline_prompt_record(
+    manifest: dict,
+    seed_draft_path: Path,
+    loaded_seed_draft: LoadedInputGroup | None,
+) -> str:
+    loaded_summary = ""
+    if loaded_seed_draft:
+        summary = loaded_seed_draft.summary
+        loaded_summary = (
+            "\n\n## Loaded Seed Draft Summary\n"
+            f"- Loaded files: {summary['loadedFiles']}\n"
+            f"- Failed files: {summary['failedFiles']}\n"
+            f"- Chunks: {summary['chunks']}\n"
+            f"- Assets: {summary['assets']}\n"
+        )
+    return f"""# Seed Draft Baseline
+
+Title: {manifest["title"]}
+
+Topic: {manifest["topic"]}
+
+Start mode: rewrite
+
+Seed draft: {seed_draft_path}
+
+This version was imported as the accepted baseline before model rewriting. It is not a generated draft.
+{loaded_summary}
+"""
+
+
 def _seed_draft_markdown(path: Path, text: str) -> str:
     return f"""# Seed Draft
 
@@ -563,6 +700,20 @@ Source path: {path}
 
 {text.strip() or "TODO"}
 """
+
+
+def _loaded_seed_draft_text(group: LoadedInputGroup) -> str:
+    sections: list[str] = []
+    for result in group.results:
+        for document in result.get("documents", []):
+            if not isinstance(document, dict):
+                continue
+            relative = document.get("relativePath", document.get("sourcePath", "Seed draft"))
+            markdown = str(document.get("markdown") or document.get("text") or "").strip()
+            if not markdown:
+                continue
+            sections.append(f"# {relative}\n\n{markdown}" if not markdown.startswith("#") else markdown)
+    return "\n\n---\n\n".join(sections).strip() or group.markdown
 
 
 def _project_root(project_dir: Path) -> Path:

@@ -1,11 +1,15 @@
+import json
 import sys
 import subprocess
 import sqlite3
 import threading
 import time
 import urllib.error
+import urllib.request
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import pytest
 
@@ -24,7 +28,16 @@ from asl.templates import (
     offline_revision,
     plan_prompt,
 )
-from asl.ui import _browse_payload, _create_directory, _create_project, _start_run_job
+from asl.ui import (
+    _INDEX_HTML,
+    _browse_payload,
+    _create_directory,
+    _create_project,
+    _handler_factory,
+    _project_payload,
+    _run_project,
+    _start_run_job,
+)
 from asl.web_research import WebResearchSettings, WebSource
 from asl.workspace import read_json
 
@@ -244,12 +257,19 @@ def test_rewrite_seed_draft_pdf_is_loaded_through_smart_loader(tmp_path: Path) -
     seed_markdown = (project / "v1" / "inputs" / "seed_draft.md").read_text(encoding="utf-8")
     assert "Loaded Seed Draft" in seed_markdown
     assert "sample from draft.pdf" in seed_markdown
-    prompt = (project / "v1" / "prompt.md").read_text(encoding="utf-8")
-    assert "Previous version: none" in prompt
+    baseline_draft = (project / "v1" / "draft.md").read_text(encoding="utf-8")
+    assert "sample from draft.pdf" in baseline_draft
+    prompt = (project / "v2" / "prompt.md").read_text(encoding="utf-8")
+    assert "Previous version: v1" in prompt
     assert (project / "v1" / "html" / "inputs_seed_draft.html").exists()
-    metadata = read_json(project / "v1" / "metadata.json")
-    assert metadata["previous_draft_source"] == "seed_draft"
-    assert metadata["loaded_seed_draft"]["summary"]["loadedFiles"] == 1
+    assert (project / "v2" / "html" / "draft.html").exists()
+    baseline_metadata = read_json(project / "v1" / "metadata.json")
+    assert baseline_metadata["imported_seed_baseline"] is True
+    assert baseline_metadata["previous_draft_source"] == "seed_draft"
+    assert baseline_metadata["loaded_seed_draft"]["summary"]["loadedFiles"] == 1
+    generated_metadata = read_json(project / "v2" / "metadata.json")
+    assert generated_metadata["previous_draft_source"] == "accepted_version"
+    assert generated_metadata["previous_accepted_version"] == "v1"
 
 
 def test_web_research_outputs_are_saved_and_injected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -351,6 +371,105 @@ def test_ui_create_project_allows_blank_title(tmp_path: Path) -> None:
 
     assert project.name == "transparent-public-program-evaluation"
     assert manifest["title"] == "transparent public program evaluation"
+
+
+def test_ui_run_missing_project_auto_creates(tmp_path: Path) -> None:
+    missing = tmp_path / "papers" / "test2"
+
+    result = _run_project({"projectDir": str(missing), "offline": True, "cycles": "1"}, tmp_path)
+
+    manifest = read_json(missing / "project.json")
+    assert manifest["title"] == "Test2"
+    assert manifest["topic"] == "Test2"
+    assert (missing / "v1" / "draft.md").exists()
+    assert result["project"]["path"] == str(missing.resolve())
+
+
+def test_ui_auto_create_with_seed_defaults_to_rewrite_baseline(tmp_path: Path) -> None:
+    seed = tmp_path / "seed.md"
+    seed.write_text("# Seed Draft Title\n\nOriginal seed body.", encoding="utf-8")
+    project = tmp_path / "papers" / "auto-rewrite"
+
+    result = _run_project(
+        {"projectDir": str(project), "offline": True, "cycles": "1", "seedDraftFile": str(seed)},
+        tmp_path,
+    )
+
+    manifest = read_json(project / "project.json")
+    assert manifest["title"] == "Seed Draft Title"
+    assert manifest["topic"] == "Seed Draft Title"
+    assert manifest["task"]["start_mode"] == "rewrite"
+    assert read_json(project / "v1" / "metadata.json")["imported_seed_baseline"] is True
+    assert "Original seed body." in (project / "v1" / "draft.md").read_text(encoding="utf-8")
+    assert (project / "v2" / "draft.md").exists()
+    assert [Path(path).name for path in result["created"]] == ["v2"]
+
+
+def test_ui_auto_create_uses_loader_title_for_pdf_seed(tmp_path: Path) -> None:
+    seed = tmp_path / "draft.pdf"
+    seed.write_text(
+        "Adaptability, Scalability and Sustainability (ASaS) of complex health interventions\n\nPDF body.",
+        encoding="utf-8",
+    )
+    fake_loader = _write_fake_smart_loader(tmp_path / "fake-smart-loader")
+    project = tmp_path / "papers" / "test2"
+
+    _run_project(
+        {
+            "projectDir": str(project),
+            "offline": True,
+            "cycles": "1",
+            "seedDraftFile": str(seed),
+            "smartLoader": str(fake_loader),
+        },
+        tmp_path,
+    )
+
+    manifest = read_json(project / "project.json")
+    assert manifest["title"] == "Adaptability, Scalability and Sustainability (ASaS) of complex health interventions"
+    assert manifest["topic"] == manifest["title"]
+    assert manifest["task"]["start_mode"] == "rewrite"
+
+
+def test_ui_offline_checkbox_defaults_unchecked() -> None:
+    offline_input = _INDEX_HTML.split('id="offline"', 1)[1].split(">", 1)[0]
+
+    assert "checked" not in offline_input
+
+
+def test_ui_run_rejects_non_project_directory_with_files(tmp_path: Path) -> None:
+    existing = tmp_path / "papers" / "not-a-project"
+    existing.mkdir(parents=True)
+    (existing / "notes.md").write_text("not a manifest", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="new or empty project folder"):
+        _run_project({"projectDir": str(existing), "offline": True}, tmp_path)
+
+
+def test_ui_project_payload_missing_project_has_helpful_error(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="project.json"):
+        _project_payload(tmp_path)
+
+
+def test_ui_get_project_missing_returns_json_error(tmp_path: Path) -> None:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler_factory(tmp_path))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    missing = tmp_path / "papers" / "test2"
+    url = f"http://127.0.0.1:{server.server_port}/api/project?projectDir={quote(str(missing))}"
+
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(url, timeout=5)
+        payload = json.loads(exc_info.value.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert exc_info.value.code == 400
+    assert "auto-create" in payload["error"]
+    assert "project.json" in payload["error"]
 
 
 def test_ui_reuses_existing_running_job_for_same_project(
@@ -763,6 +882,8 @@ def test_worse_candidate_is_kept_but_not_accepted(tmp_path: Path) -> None:
     assert metadata["accepted"] is False
     assert metadata["quality_gate"]["decision"] == "rejected"
     assert metadata["previous_accepted_version"] == first.name
+    assert metadata["models"]["used"]["score"][0]["provider"] == "fake"
+    assert metadata["models"]["used"]["score"][0]["model"] == "worse-scorer"
 
 
 def test_empty_brief_can_run_offline(tmp_path: Path) -> None:
@@ -808,6 +929,7 @@ import sys
 
 input_path = pathlib.Path(sys.argv[1])
 text = input_path.read_text(encoding="utf-8")
+title = next((line.strip().lstrip("#").strip() for line in text.splitlines() if line.strip()), input_path.stem)
 sample = f"sample from {{input_path.name}}: {{text.strip()}}"
 result = {{
     "rootPath": str(input_path.parent),
@@ -817,12 +939,13 @@ result = {{
             "sourcePath": str(input_path),
             "relativePath": input_path.name,
             "format": "markdown",
+            "title": title,
             "text": sample,
             "markdown": sample,
             "chunks": [],
             "assets": [],
             "warnings": [],
-            "metadata": {{"sizeBytes": input_path.stat().st_size, "loader": "fake"}},
+            "metadata": {{"sizeBytes": input_path.stat().st_size, "loader": "fake", "info": {{"Title": title}}}},
         }}
     ],
     "chunks": [
