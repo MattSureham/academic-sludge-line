@@ -16,6 +16,7 @@ IMAGE_SUFFIXES = {".gif", ".jpeg", ".jpg", ".png", ".webp"}
 BASE_OUTPUT_ORDER = (
     "topic_proposal.md",
     "prompt.md",
+    "inputs/seed_draft.md",
     "inputs/data.md",
     "inputs/references.md",
     "inputs/smart_loader.json",

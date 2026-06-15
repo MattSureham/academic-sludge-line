@@ -93,9 +93,17 @@ http://127.0.0.1:8765
 ## Optional Document Loading
 
 The core pipeline has no runtime dependencies beyond Python. Loading PDFs, DOCX,
-and mixed document folders is optional and uses the adjacent `smart-loader`
-project when available. If it is not available, ASL still runs with briefs and
-plain Markdown/text inputs.
+and mixed document folders is optional and uses the bundled `smart-loader`
+project under `asl/_vendor/smart-loader`. `scripts/deploy_local.sh` installs
+those Node dependencies automatically when `npm` is available. To install them
+manually:
+
+```bash
+(cd asl/_vendor/smart-loader && npm ci --omit=dev)
+```
+
+If Node dependencies are not installed, ASL still runs with briefs and plain
+Markdown/text inputs.
 
 ## Agent Instructions
 

@@ -12,7 +12,7 @@ TODO, refuses fake citations, and separates drafts from verified research.
 - Generates a research plan, draft, reviewer reports, and revision plan.
 - Supports an offline template mode that runs with no dependencies.
 - Optionally calls an LLM when `OPENAI_API_KEY` is available.
-- Loads optional data and reference files through `smart-loader` when paths are provided.
+- Loads optional data, reference files, and PDF/DOCX seed drafts through the bundled `smart-loader`.
 - Writes static HTML views for every generated version.
 - Keeps a `sources.json` placeholder so claims can be audited later.
 
@@ -38,8 +38,9 @@ asl --version
 ```
 
 The core pipeline has no required runtime dependencies beyond Python 3.10+.
-Optional integrations such as LLM APIs, local agent CLIs, OCR, Poppler, and
-`smart-loader` are only needed when you use those features.
+Optional integrations such as LLM APIs, local agent CLIs, OCR, Poppler, Node,
+and the bundled `smart-loader` dependencies are only needed when you use those
+features.
 
 See [DEPLOY.md](DEPLOY.md) for copy-paste deployment steps and agent-specific
 instructions.
@@ -116,8 +117,14 @@ unless explicitly requested. `asl ui` is optional and starts a local web UI.
 
 ## Data And References
 
-If the adjacent `../smart-loader` project is available, ASL can load mixed
-document folders into the draft context:
+ASL includes a bundled copy of `smart-loader` for mixed document folders and
+PDF/DOCX seed drafts. If Node dependencies have not been installed yet, run:
+
+```bash
+(cd asl/_vendor/smart-loader && npm ci --omit=dev)
+```
+
+Then pass files or folders as data and references:
 
 ```bash
 asl init \
@@ -141,11 +148,12 @@ asl run papers/demo-policy-paper \
 ```
 
 Loaded material is written under each version's `inputs/` folder and injected
-into the research plan and draft prompts. Set `ASL_SMART_LOADER` or pass
-`--smart-loader` if the loader lives somewhere other than `../smart-loader`.
+into the research plan and draft prompts. The bundled loader is used by
+default. Set `ASL_SMART_LOADER` or pass `--smart-loader` only when you want to
+override it with another loader checkout or CLI.
 
 The loader accepts files or folders and supports Markdown, text, CSV, JSON,
-HTML, PDF, DOCX, and legacy DOC through the adjacent `smart-loader` project.
+HTML, PDF, DOCX, and legacy DOC through the bundled `smart-loader` project.
 PDF text is extracted directly when possible. For scanned or image-heavy PDFs,
 ASL asks `smart-loader` to render PDF pages into image assets, then optionally
 runs OCR over extracted image assets when `tesseract` is installed. DOCX files
@@ -172,6 +180,10 @@ Every version also gets a static HTML bundle under `vN/html/`. Open
 `vN/html/index.html` to read the prompt record, loaded inputs, draft, reviews,
 revision plan, quality scores, metadata, and extracted image assets in a
 browser-friendly format.
+
+For rewrite tasks, `--seed-draft-file` can point to Markdown/text directly or
+to a PDF/DOCX file. Non-text seed drafts are loaded through the same bundled
+loader and saved as `vN/inputs/seed_draft.md` plus `vN/html/inputs_seed_draft.html`.
 
 ## Web Research And Agent Tools
 

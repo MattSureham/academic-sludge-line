@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import mimetypes
 import threading
+import time
+import traceback
+import uuid
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 from . import __version__
@@ -35,6 +39,9 @@ def run_ui(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False
 
 
 def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
+    jobs: dict[str, _RunJob] = {}
+    jobs_lock = threading.Lock()
+
     class ASLUIHandler(BaseHTTPRequestHandler):
         server_version = f"ASLUI/{__version__}"
 
@@ -68,6 +75,15 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
                 project_dir = _resolve_path(params.get("projectDir", [""])[0], cwd)
                 self._send_json(_project_payload(project_dir))
                 return
+            if parsed.path.startswith("/api/jobs/"):
+                job_id = parsed.path.rsplit("/", 1)[-1]
+                with jobs_lock:
+                    job = jobs.get(job_id)
+                if not job:
+                    self._send_json({"error": "job not found"}, HTTPStatus.NOT_FOUND)
+                    return
+                self._send_json(job.snapshot())
+                return
             self._send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
@@ -78,7 +94,7 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
                     self._send_json(_create_project(payload, cwd))
                     return
                 if parsed.path == "/api/run":
-                    self._send_json(_run_project(payload, cwd))
+                    self._send_json(_start_run_job(payload, cwd, jobs, jobs_lock))
                     return
                 if parsed.path == "/api/mkdir":
                     self._send_json(_create_directory(payload, cwd))
@@ -149,7 +165,92 @@ def _project_title(payload: dict) -> str:
     return "Untitled Paper"
 
 
-def _run_project(payload: dict, cwd: Path) -> dict:
+class _RunJob:
+    def __init__(self, job_id: str) -> None:
+        self.id = job_id
+        self.status = "queued"
+        self.created_at = time.time()
+        self.started_at: float | None = None
+        self.finished_at: float | None = None
+        self.progress: dict[str, object] = {"stage": "queued", "message": "Queued"}
+        self.events: list[dict[str, object]] = []
+        self.result: dict | None = None
+        self.error: str | None = None
+        self.traceback: str | None = None
+        self._lock = threading.Lock()
+
+    def mark_running(self) -> None:
+        with self._lock:
+            self.status = "running"
+            self.started_at = time.time()
+            self._append_event({"stage": "running", "message": "Run started"})
+
+    def update(self, event: dict[str, object]) -> None:
+        with self._lock:
+            self.progress = dict(event)
+            self._append_event(event)
+
+    def finish(self, result: dict) -> None:
+        with self._lock:
+            self.status = "succeeded"
+            self.finished_at = time.time()
+            self.result = result
+            self.progress = {"stage": "complete", "message": "Run complete"}
+            self._append_event(self.progress)
+
+    def fail(self, error: str, stack: str) -> None:
+        with self._lock:
+            self.status = "failed"
+            self.finished_at = time.time()
+            self.error = error
+            self.traceback = stack
+            self.progress = {"stage": "failed", "message": error}
+            self._append_event(self.progress)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            finished = self.finished_at or time.time()
+            start = self.started_at or self.created_at
+            return {
+                "id": self.id,
+                "status": self.status,
+                "createdAt": self.created_at,
+                "startedAt": self.started_at,
+                "finishedAt": self.finished_at,
+                "elapsedSeconds": max(0, round(finished - start, 1)),
+                "progress": dict(self.progress),
+                "events": list(self.events[-30:]),
+                "result": self.result,
+                "error": self.error,
+                "traceback": self.traceback,
+            }
+
+    def _append_event(self, event: dict[str, object]) -> None:
+        self.events.append({"time": time.time(), **event})
+        if len(self.events) > 80:
+            self.events = self.events[-80:]
+
+
+def _start_run_job(payload: dict, cwd: Path, jobs: dict[str, _RunJob], jobs_lock: threading.Lock) -> dict:
+    job = _RunJob(uuid.uuid4().hex[:12])
+    with jobs_lock:
+        jobs[job.id] = job
+
+    def worker() -> None:
+        job.mark_running()
+        try:
+            result = _run_project(payload, cwd, progress=job.update)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the local UI.
+            job.fail(str(exc), traceback.format_exc())
+            return
+        job.finish(result)
+
+    thread = threading.Thread(target=worker, name=f"asl-run-{job.id}", daemon=True)
+    thread.start()
+    return {"jobId": job.id, "job": job.snapshot()}
+
+
+def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]], None] | None = None) -> dict:
     project_dir = _resolve_path(payload["projectDir"], cwd)
     reviewers = tuple(_split_csv(payload.get("reviewers")) or DEFAULT_REVIEWERS)
     pipeline = PaperPipeline(
@@ -166,6 +267,7 @@ def _run_project(payload: dict, cwd: Path) -> dict:
         start_mode=payload.get("startMode") or None,
         seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
         web_research_settings=_web_research_settings(payload.get("webResearch", {})),
+        progress_callback=progress,
     )
     created = pipeline.run(cycles=max(1, int(payload.get("cycles") or 1)), reviewers=reviewers)
     return {
@@ -435,7 +537,7 @@ _INDEX_HTML = """<!doctype html>
           </label>
           <label><span class="label-text">Seed draft <span id="runSeedDraftRequired" class="required-star hidden" aria-hidden="true">*</span></span>
             <div class="path-field">
-              <input id="runSeedDraft" placeholder="path/to/draft.md">
+              <input id="runSeedDraft" placeholder="path/to/draft.md/pdf/docx">
               <button type="button" class="browse-btn" data-target="runSeedDraft" data-mode="file">Browse</button>
             </div>
           </label>
@@ -473,7 +575,7 @@ _INDEX_HTML = """<!doctype html>
         </label>
         <label>smart-loader
           <div class="path-field">
-            <input id="smartLoader" placeholder="../smart-loader">
+            <input id="smartLoader" placeholder="optional override; built-in by default">
             <button type="button" class="browse-btn" data-target="smartLoader" data-mode="any">Browse</button>
           </div>
         </label>
@@ -498,7 +600,7 @@ _INDEX_HTML = """<!doctype html>
             <input id="ocrLanguage" value="eng">
           </label>
         </div>
-        <button class="primary" type="submit">Run</button>
+        <button id="runButton" class="primary" type="submit">Run</button>
       </form>
 
       <form id="initForm" class="view" data-view="init">
@@ -519,7 +621,7 @@ _INDEX_HTML = """<!doctype html>
           </label>
           <label><span class="label-text">Seed draft <span id="initSeedDraftRequired" class="required-star hidden" aria-hidden="true">*</span></span>
             <div class="path-field">
-              <input id="initSeedDraft" placeholder="path/to/draft.md">
+              <input id="initSeedDraft" placeholder="path/to/draft.md/pdf/docx">
               <button type="button" class="browse-btn" data-target="initSeedDraft" data-mode="file">Browse</button>
             </div>
           </label>
@@ -563,6 +665,15 @@ _INDEX_HTML = """<!doctype html>
       <div class="output-head">
         <h2>Output</h2>
         <span id="status" class="status">Ready</span>
+      </div>
+      <div id="runFeedback" class="run-feedback" hidden>
+        <div class="run-feedback-head">
+          <strong id="runFeedbackTitle">Pipeline run</strong>
+          <span id="runFeedbackMeta"></span>
+        </div>
+        <div class="progress-track" aria-hidden="true"><div id="runProgressBar"></div></div>
+        <div id="runFeedbackMessage" class="run-message"></div>
+        <ol id="runEvents" class="run-events"></ol>
       </div>
       <div id="projectSummary" class="summary"></div>
       <div id="fileTabs" class="file-tabs"></div>
@@ -858,6 +969,84 @@ textarea {
   font-size: 12px;
 }
 
+.run-feedback {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  margin-bottom: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.run-feedback[hidden] {
+  display: none;
+}
+
+.run-feedback-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.run-feedback-head strong {
+  font-size: 13px;
+}
+
+#runFeedbackMeta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1ec;
+}
+
+#runProgressBar {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.run-message {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.run-events {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+  list-style: none;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.run-events li {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-events .event-stage {
+  color: var(--accent-strong);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .summary {
   display: grid;
   gap: 8px;
@@ -1148,9 +1337,33 @@ const state = {
   currentProject: null,
   latestFiles: {},
   browser: null,
+  activeRunJobId: null,
+  runPollTimer: null,
 };
 
 const $ = (id) => document.getElementById(id);
+
+const RUN_STAGE_PROGRESS = {
+  queued: 0,
+  running: 2,
+  cycle_start: 4,
+  version_prepare: 7,
+  previous_draft: 10,
+  seed_draft: 13,
+  inputs: 18,
+  topic_discovery: 28,
+  web_research: 34,
+  prompt_record: 42,
+  plan: 50,
+  draft: 62,
+  review: 75,
+  revision: 84,
+  quality_gate: 91,
+  metadata: 96,
+  cycle_complete: 99,
+  complete: 100,
+  failed: 100,
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -1164,6 +1377,84 @@ async function api(path, options = {}) {
 
 function setStatus(text) {
   $("status").textContent = text;
+}
+
+function setRunControls(running) {
+  const button = $("runButton");
+  if (!button) return;
+  button.disabled = running;
+  button.textContent = running ? "Running..." : "Run";
+}
+
+function runProgressPercent(job) {
+  if (!job) return 0;
+  if (job.status === "succeeded") return 100;
+  const progress = job.progress || {};
+  const stagePercent = RUN_STAGE_PROGRESS[progress.stage] ?? 5;
+  const cycle = Math.max(1, Number(progress.cycle || 1));
+  const total = Math.max(1, Number(progress.total_cycles || 1));
+  return Math.max(0, Math.min(100, ((cycle - 1) * 100 + stagePercent) / total));
+}
+
+function renderRunJob(job) {
+  if (!job) return;
+  const panel = $("runFeedback");
+  panel.hidden = false;
+  const progress = job.progress || {};
+  const cycle = progress.cycle && progress.total_cycles ? `cycle ${progress.cycle}/${progress.total_cycles}` : job.status;
+  const version = progress.version ? ` · ${progress.version}` : "";
+  const elapsed = typeof job.elapsedSeconds === "number" ? `${job.elapsedSeconds.toFixed(1)}s` : "";
+  $("runFeedbackTitle").textContent = `Pipeline ${job.status}`;
+  $("runFeedbackMeta").textContent = `${cycle}${version} · ${elapsed} · ${job.id}`;
+  $("runProgressBar").style.width = `${runProgressPercent(job)}%`;
+  $("runFeedbackMessage").textContent = progress.message || job.error || "Working";
+
+  const events = $("runEvents");
+  events.innerHTML = "";
+  for (const event of (job.events || []).slice(-12).reverse()) {
+    const item = document.createElement("li");
+    const stage = document.createElement("span");
+    stage.className = "event-stage";
+    stage.textContent = `${String(event.stage || "stage").replaceAll("_", " ")}:`;
+    const message = document.createElement("span");
+    message.textContent = event.message || "";
+    item.append(stage, message);
+    events.appendChild(item);
+  }
+}
+
+function stopRunPolling() {
+  if (state.runPollTimer) {
+    clearTimeout(state.runPollTimer);
+    state.runPollTimer = null;
+  }
+}
+
+async function pollRunJob(jobId) {
+  const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+  if (state.activeRunJobId !== jobId) return;
+  renderRunJob(job);
+  if (job.status === "queued" || job.status === "running") {
+    state.runPollTimer = setTimeout(() => {
+      pollRunJob(jobId).catch((error) => {
+        stopRunPolling();
+        state.activeRunJobId = null;
+        setRunControls(false);
+        showError(error);
+      });
+    }, 1000);
+    return;
+  }
+  stopRunPolling();
+  state.activeRunJobId = null;
+  setRunControls(false);
+  if (job.status === "succeeded") {
+    if (job.result?.project) renderProject(job.result.project);
+    setStatus("Done");
+    return;
+  }
+  setStatus("Error");
+  $("preview").textContent = job.traceback || job.error || "Pipeline failed";
 }
 
 function setRequiredState(inputId, starId, enabled) {
@@ -1503,7 +1794,9 @@ async function createProject(event) {
 
 async function runProject(event) {
   event.preventDefault();
-  setStatus("Running");
+  stopRunPolling();
+  setRunControls(true);
+  setStatus("Queued");
   const payload = {
     projectDir: $("runProjectDir").value,
     cycles: $("cycles").value,
@@ -1529,9 +1822,16 @@ async function runProject(event) {
     },
     models: collectRoutes("runModelRoutes"),
   };
-  const result = await api("/api/run", { method: "POST", body: JSON.stringify(payload) });
-  renderProject(result.project);
-  setStatus("Done");
+  try {
+    const result = await api("/api/run", { method: "POST", body: JSON.stringify(payload) });
+    state.activeRunJobId = result.jobId;
+    renderRunJob(result.job);
+    setStatus("Running");
+    await pollRunJob(result.jobId);
+  } catch (error) {
+    setRunControls(false);
+    throw error;
+  }
 }
 
 function bind() {

@@ -193,6 +193,8 @@ def _resolve_cli(cli_path: Path | None) -> Path:
         candidates.append(Path(env_path))
 
     current_file = Path(__file__).resolve()
+    bundled_loader = current_file.parent / "_vendor" / "smart-loader"
+    candidates.append(bundled_loader)
     for parent in current_file.parents:
         candidates.append(parent / "smart-loader")
     candidates.extend(
@@ -212,7 +214,9 @@ def _resolve_cli(cli_path: Path | None) -> Path:
         return Path(executable)
 
     raise RuntimeError(
-        "smart-loader was not found. Set ASL_SMART_LOADER or pass --smart-loader with the CLI, dist/cli.js, or repo path."
+        "smart-loader was not found. ASL includes a bundled loader under asl/_vendor/smart-loader; "
+        "run npm ci there if its dependencies are missing, or set ASL_SMART_LOADER/pass --smart-loader "
+        "with another CLI, dist/cli.js, or repo path."
     )
 
 
@@ -248,7 +252,12 @@ def _command_prefix(cli_path: Path) -> list[str]:
 
 
 def _render_group_markdown(label: str, paths: tuple[Path, ...], results: list[dict[str, Any]]) -> str:
-    title = "Loaded Data" if label == "data" else "Loaded References"
+    titles = {
+        "data": "Loaded Data",
+        "references": "Loaded References",
+        "seed_draft": "Loaded Seed Draft",
+    }
+    title = titles.get(label, f"Loaded {label.replace('_', ' ').title()}")
     sections = [f"# {title}", "", "Input paths:", *[f"- {path}" for path in paths], ""]
     summary = _combine_summaries(results)
     sections.extend(

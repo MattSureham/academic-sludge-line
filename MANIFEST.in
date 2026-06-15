@@ -1,0 +1,5 @@
+recursive-include asl/_vendor/smart-loader README.md package.json package-lock.json tsconfig.json tsconfig.test.json
+recursive-include asl/_vendor/smart-loader/src *.ts
+recursive-include asl/_vendor/smart-loader/dist *.js *.d.ts
+recursive-include asl/_vendor/smart-loader/tests *.ts
+recursive-exclude asl/_vendor/smart-loader/node_modules *

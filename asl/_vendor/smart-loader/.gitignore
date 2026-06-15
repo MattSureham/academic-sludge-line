@@ -1,0 +1,4 @@
+node_modules
+.smart-loader
+coverage
+*.log

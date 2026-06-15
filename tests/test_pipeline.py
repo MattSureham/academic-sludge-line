@@ -13,6 +13,7 @@ from asl.html_render import render_version_html
 from asl.local_providers import cc_switch_settings_for_ref
 from asl.llm import LLMClient, LLMResult, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
+from asl.smart_loader import SmartLoader
 from asl.templates import (
     draft_prompt,
     offline_draft,
@@ -58,6 +59,33 @@ def test_pipeline_creates_versioned_outputs(tmp_path: Path) -> None:
     metadata = read_json(project / "v1" / "metadata.json")
     assert "html/" in metadata["outputs"]
     assert metadata["input_loader"]["settings"]["pdf_render_pages"] is True
+
+
+def test_pipeline_emits_progress_events(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="progress",
+        title="Progress",
+        topic="visible pipeline progress",
+        brief="Show status while running.",
+    )
+    events = []
+
+    created = PaperPipeline(
+        project,
+        client=LLMClient(offline=True),
+        progress_callback=events.append,
+    ).run(cycles=1)
+
+    assert created[0].name == "v1"
+    stages = [event["stage"] for event in events]
+    assert stages[0] == "cycle_start"
+    assert "plan" in stages
+    assert "draft" in stages
+    assert "review" in stages
+    assert stages[-1] == "cycle_complete"
+    assert events[-1]["cycle"] == 1
+    assert events[-1]["total_cycles"] == 1
 
 
 def test_offline_templates_dedent_multiline_inputs() -> None:
@@ -173,6 +201,53 @@ def test_smart_loader_context_is_loaded_for_data_and_references(tmp_path: Path) 
     assert metadata["loaded_inputs"][0]["summary"]["loadedFiles"] == 1
     assert (project / "v1" / "html" / "inputs_data.html").exists()
     assert (project / "v1" / "html" / "inputs_references.html").exists()
+
+
+def test_smart_loader_defaults_to_bundled_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ASL_SMART_LOADER", raising=False)
+
+    loader = SmartLoader()
+
+    assert loader.cli_path.as_posix().endswith("asl/_vendor/smart-loader/dist/cli.js")
+
+
+def test_rewrite_seed_draft_pdf_is_loaded_through_smart_loader(tmp_path: Path) -> None:
+    seed = tmp_path / "draft.pdf"
+    seed.write_text("PDF-like draft body.", encoding="utf-8")
+    fake_loader = _write_fake_smart_loader(tmp_path / "fake-smart-loader")
+
+    code = main(
+        [
+            "init",
+            "--root",
+            str(tmp_path),
+            "--slug",
+            "rewrite-pdf",
+            "--title",
+            "Rewrite PDF",
+            "--topic",
+            "documented evidence",
+            "--start-mode",
+            "rewrite",
+            "--seed-draft-file",
+            str(seed),
+        ]
+    )
+    assert code == 0
+
+    project = tmp_path / "papers" / "rewrite-pdf"
+    code = main(["run", str(project), "--offline", "--smart-loader", str(fake_loader)])
+
+    assert code == 0
+    seed_markdown = (project / "v1" / "inputs" / "seed_draft.md").read_text(encoding="utf-8")
+    assert "Loaded Seed Draft" in seed_markdown
+    assert "sample from draft.pdf" in seed_markdown
+    prompt = (project / "v1" / "prompt.md").read_text(encoding="utf-8")
+    assert "Previous version: none" in prompt
+    assert (project / "v1" / "html" / "inputs_seed_draft.html").exists()
+    metadata = read_json(project / "v1" / "metadata.json")
+    assert metadata["previous_draft_source"] == "seed_draft"
+    assert metadata["loaded_seed_draft"]["summary"]["loadedFiles"] == 1
 
 
 def test_web_research_outputs_are_saved_and_injected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

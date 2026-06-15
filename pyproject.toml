@@ -15,6 +15,8 @@ dependencies = []
 [project.scripts]
 asl = "asl.cli:main"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 include = ["asl*"]
-

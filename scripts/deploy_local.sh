@@ -42,6 +42,13 @@ fi
 python -m pip install --upgrade pip
 python -m pip install -e .
 
+if command -v npm >/dev/null 2>&1; then
+  (cd asl/_vendor/smart-loader && npm ci --omit=dev >/dev/null)
+  SMART_LOADER_STATUS="Bundled smart-loader dependencies were installed."
+else
+  SMART_LOADER_STATUS="Bundled smart-loader dependencies were not installed because npm was not found."
+fi
+
 asl --version
 
 SMOKE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/asl-deploy-smoke.XXXXXX")
@@ -64,3 +71,5 @@ Next commands:
   asl run papers/demo-policy-paper --cycles 1 --offline
   asl ui --open
 EOF
+
+printf '%s\n' "$SMART_LOADER_STATUS"

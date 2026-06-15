@@ -6,14 +6,15 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
+from typing import Callable
 
 from .html_render import render_version_html
 from .llm import LLMClient
 from .smart_loader import (
     LoadedInputGroup,
+    SmartLoader,
     SmartLoaderSettings,
     append_context_to_brief,
-    load_input_groups,
     resolve_input_paths,
 )
 from .templates import (
@@ -53,6 +54,7 @@ from .workspace import (
 
 DEFAULT_REVIEWERS = ("methods", "evidence", "style")
 START_MODES = ("from-scratch", "discover-topic", "rewrite")
+TEXT_SEED_DRAFT_SUFFIXES = {".md", ".markdown", ".txt", ".tex", ".rst"}
 
 
 def init_project(
@@ -120,6 +122,7 @@ class PaperPipeline:
         start_mode: str | None = None,
         seed_draft_path: Path | None = None,
         web_research_settings: WebResearchSettings | None = None,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> None:
         self.project_dir = project_dir.resolve()
         self.client = client or LLMClient()
@@ -157,33 +160,96 @@ class PaperPipeline:
         )
         self.smart_loader_path = smart_loader_path
         self.smart_loader_settings = smart_loader_settings or SmartLoaderSettings()
+        self.resolved_smart_loader_path: Path | None = None
         self.web_research_settings = web_research_settings or WebResearchSettings()
+        self.progress_callback = progress_callback
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
-        for _ in range(cycles):
-            created.append(self._run_one_cycle(reviewers))
+        total_cycles = max(1, cycles)
+        for index in range(total_cycles):
+            self._emit_progress(
+                "cycle_start",
+                f"Starting cycle {index + 1} of {total_cycles}",
+                cycle=index + 1,
+                total_cycles=total_cycles,
+            )
+            created.append(self._run_one_cycle(reviewers, cycle=index + 1, total_cycles=total_cycles))
         return created
 
-    def _run_one_cycle(self, reviewers: tuple[str, ...]) -> Path:
+    def _run_one_cycle(self, reviewers: tuple[str, ...], cycle: int = 1, total_cycles: int = 1) -> Path:
         version = next_version(self.project_dir)
         version_dir = self.project_dir / f"v{version}"
+        self._emit_progress(
+            "version_prepare",
+            f"Preparing {version_dir.name}",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         previous_dir = accepted_version(self.project_dir)
         previous_draft = None
+        loaded_seed_draft = None
+        previous_draft_source = None
         if previous_dir and previous_dir != version_dir and (previous_dir / "draft.md").exists():
+            self._emit_progress(
+                "previous_draft",
+                f"Reading accepted draft from {previous_dir.name}",
+                cycle=cycle,
+                total_cycles=total_cycles,
+                version=version_dir.name,
+            )
             previous_draft = read_text(previous_dir / "draft.md")
+            previous_draft_source = "accepted_version"
         elif self.start_mode == "rewrite" and self.seed_draft_path and self.seed_draft_path.exists():
-            previous_draft = read_text(self.seed_draft_path)
+            self._emit_progress(
+                "seed_draft",
+                f"Loading seed draft: {self.seed_draft_path.name}",
+                cycle=cycle,
+                total_cycles=total_cycles,
+                version=version_dir.name,
+            )
+            previous_draft, loaded_seed_draft = self._load_seed_draft(version_dir)
+            previous_draft_source = "seed_draft"
 
+        self._emit_progress(
+            "inputs",
+            "Loading data and references",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         loaded_inputs = self._load_inputs(version_dir)
+        self._write_smart_loader_manifest(version_dir, loaded_seed_draft, loaded_inputs)
         brief = append_context_to_brief(self.brief, loaded_inputs)
         working_manifest = dict(self.manifest)
+        self._emit_progress(
+            "topic_discovery",
+            "Checking topic discovery",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         discovery = self._discover_topic_if_needed(version_dir, working_manifest, brief)
         if discovery:
             brief = f"{brief.strip() or 'TODO'}\n\n## Topic Discovery\n\n{discovery.text}"
+        self._emit_progress(
+            "web_research",
+            "Running web research" if self.web_research_settings.enabled else "Skipping web research",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         web_research = self._run_web_research(version_dir, working_manifest, brief)
         brief = append_web_research_to_brief(brief, web_research)
 
+        self._emit_progress(
+            "prompt_record",
+            "Writing prompt record",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         write_text(
             version_dir / "prompt.md",
             _prompt_record(
@@ -195,6 +261,13 @@ class PaperPipeline:
             ),
         )
 
+        self._emit_progress(
+            "plan",
+            "Generating research plan",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         plan = _generate(
             self.client,
             plan_prompt(working_manifest, brief, previous_draft),
@@ -203,6 +276,13 @@ class PaperPipeline:
         )
         write_text(version_dir / "research_plan.md", plan.text)
 
+        self._emit_progress(
+            "draft",
+            "Generating draft",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         draft = _generate(
             self.client,
             draft_prompt(working_manifest, plan.text, brief, previous_draft),
@@ -214,6 +294,14 @@ class PaperPipeline:
         review_texts = []
         review_models = {}
         for reviewer in reviewers:
+            self._emit_progress(
+                "review",
+                f"Running {reviewer} reviewer",
+                cycle=cycle,
+                total_cycles=total_cycles,
+                version=version_dir.name,
+                reviewer=reviewer,
+            )
             review = _generate(
                 self.client,
                 review_prompt(working_manifest, draft.text, reviewer),
@@ -224,6 +312,13 @@ class PaperPipeline:
             review_models[reviewer] = _result_metadata(review)
             write_text(version_dir / "reviews" / f"{reviewer}.md", review.text)
 
+        self._emit_progress(
+            "revision",
+            "Generating revision plan",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         revision = _generate(
             self.client,
             revision_prompt(working_manifest, draft.text, review_texts),
@@ -231,16 +326,31 @@ class PaperPipeline:
             role="revision",
         )
         write_text(version_dir / "revision_plan.md", revision.text)
+        self._emit_progress(
+            "quality_gate",
+            "Scoring candidate draft",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         quality_gate = self._quality_gate(working_manifest, previous_dir, previous_draft, draft.text, version_dir)
         if quality_gate["accepted"]:
             write_accepted_version(self.project_dir, version_dir)
 
+        self._emit_progress(
+            "metadata",
+            "Writing metadata and HTML",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         metadata = {
             "schema": "academic-sludge-line.version.v1",
             "version": version,
             "created_at": utc_now(),
             "previous_version": previous_dir.name if previous_dir else None,
             "previous_accepted_version": previous_dir.name if previous_dir else None,
+            "previous_draft_source": previous_draft_source,
             "start_mode": self.start_mode,
             "accepted": quality_gate["accepted"],
             "quality_gate": quality_gate,
@@ -257,14 +367,16 @@ class PaperPipeline:
                 },
             },
             "input_loader": {
-                "smart_loader": str(self.smart_loader_path) if self.smart_loader_path else None,
+                "smart_loader": str(self.resolved_smart_loader_path) if self.resolved_smart_loader_path else None,
+                "requested_smart_loader": str(self.smart_loader_path) if self.smart_loader_path else None,
                 "settings": asdict(self.smart_loader_settings),
             },
             "web_research": web_research.metadata(),
+            "loaded_seed_draft": loaded_seed_draft.metadata() if loaded_seed_draft else None,
             "loaded_inputs": [group.metadata() for group in loaded_inputs],
             "outputs": [
                 "prompt.md",
-                *(["inputs/"] if loaded_inputs else []),
+                *(["inputs/"] if loaded_inputs or loaded_seed_draft or previous_draft_source == "seed_draft" else []),
                 *(["web_research.md", "web_research.json"] if web_research.enabled else []),
                 "research_plan.md",
                 "draft.md",
@@ -275,7 +387,20 @@ class PaperPipeline:
         }
         write_json(version_dir / "metadata.json", metadata)
         render_version_html(version_dir)
+        self._emit_progress(
+            "cycle_complete",
+            f"Finished {version_dir.name}",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
         return version_dir
+
+    def _emit_progress(self, stage: str, message: str, **details: object) -> None:
+        if not self.progress_callback:
+            return
+        event: dict[str, object] = {"stage": stage, "message": message, **details}
+        self.progress_callback(event)
 
     def _run_web_research(self, version_dir: Path, manifest: dict, brief: str) -> WebResearchResult:
         result = run_web_research(manifest, brief, version_dir, self.web_research_settings)
@@ -283,20 +408,56 @@ class PaperPipeline:
         return result
 
     def _load_inputs(self, version_dir: Path) -> list[LoadedInputGroup]:
-        groups = load_input_groups(
-            self.data_paths,
-            self.reference_paths,
-            version_dir / "inputs",
-            cli_path=self.smart_loader_path,
-            settings=self.smart_loader_settings,
-        )
+        if not self.data_paths and not self.reference_paths:
+            return []
+
+        loader = SmartLoader(self.smart_loader_path, settings=self.smart_loader_settings)
+        self.resolved_smart_loader_path = loader.cli_path
+        output_dir = version_dir / "inputs"
+        groups = [
+            loader.load_group("data", self.data_paths, output_dir),
+            loader.load_group("references", self.reference_paths, output_dir),
+        ]
+        groups = [group for group in groups if group.has_inputs]
         if not groups:
             return []
 
         for group in groups:
             write_text(version_dir / "inputs" / f"{group.label}.md", group.markdown)
-        write_json(version_dir / "inputs" / "smart_loader.json", [group.metadata() for group in groups])
         return groups
+
+    def _load_seed_draft(self, version_dir: Path) -> tuple[str, LoadedInputGroup | None]:
+        if not self.seed_draft_path:
+            return "", None
+
+        if self.seed_draft_path.suffix.lower() in TEXT_SEED_DRAFT_SUFFIXES:
+            try:
+                text = read_text(self.seed_draft_path)
+            except UnicodeDecodeError:
+                pass
+            else:
+                write_text(version_dir / "inputs" / "seed_draft.md", _seed_draft_markdown(self.seed_draft_path, text))
+                return text, None
+
+        loader = SmartLoader(self.smart_loader_path, settings=self.smart_loader_settings)
+        self.resolved_smart_loader_path = loader.cli_path
+        group = loader.load_group(
+            "seed_draft",
+            [self.seed_draft_path],
+            version_dir / "inputs",
+        )
+        write_text(version_dir / "inputs" / "seed_draft.md", group.markdown)
+        return group.markdown, group
+
+    def _write_smart_loader_manifest(
+        self,
+        version_dir: Path,
+        loaded_seed_draft: LoadedInputGroup | None,
+        loaded_inputs: list[LoadedInputGroup],
+    ) -> None:
+        groups = [*([loaded_seed_draft] if loaded_seed_draft else []), *loaded_inputs]
+        if groups:
+            write_json(version_dir / "inputs" / "smart_loader.json", [group.metadata() for group in groups])
 
     def _discover_topic_if_needed(self, version_dir: Path, manifest: dict, brief: str) -> object | None:
         if self.start_mode != "discover-topic":
@@ -390,6 +551,17 @@ Start mode: {start_mode}
 ## Topic Brief
 {brief}
 {input_summary}
+"""
+
+
+def _seed_draft_markdown(path: Path, text: str) -> str:
+    return f"""# Seed Draft
+
+Source path: {path}
+
+## Text
+
+{text.strip() or "TODO"}
 """
 
 

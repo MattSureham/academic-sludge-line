@@ -11,6 +11,12 @@ build/
 *.egg-info/
 .env
 
+# Bundled smart-loader keeps source and built dist in git, but never vendors
+# dependency installs.
+asl/_vendor/smart-loader/node_modules/
+!asl/_vendor/smart-loader/dist/
+!asl/_vendor/smart-loader/dist/**
+
 # Generated paper workspaces are archived outside this code repository.
 papers/
 outputs/
