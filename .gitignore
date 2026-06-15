@@ -21,5 +21,5 @@ asl/_vendor/smart-loader/node_modules/
 papers/
 outputs/
 
-# Local agent handoff notes can contain run-specific context.
-HANDOFF.md
+# Local agent handoff notes — temporarily tracked for cross-machine sync.
+# HANDOFF.md
