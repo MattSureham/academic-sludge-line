@@ -295,6 +295,7 @@ def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]
         client=LLMClient(
             offline=bool(payload.get("offline")),
             allow_agent_tools=bool(payload.get("allowAgentTools")),
+            allow_local_agents=_bool_setting(payload.get("allowLocalAgents"), True),
         ),
         data_paths=() if inputs_persisted else tuple(Path(path) for path in _split_paths(payload.get("data"))),
         reference_paths=() if inputs_persisted else tuple(Path(path) for path in _split_paths(payload.get("references"))),
@@ -771,6 +772,10 @@ _INDEX_HTML = """<!doctype html>
           <label class="checkline">
             <input id="allowAgentTools" type="checkbox">
             Agent web/tools
+          </label>
+          <label class="checkline" title="Allow Claude Code and Codex subprocess providers">
+            <input id="allowLocalAgents" type="checkbox" checked>
+            Terminal providers
           </label>
         </div>
         <div class="inline-fields compact-fields">
@@ -2179,6 +2184,7 @@ async function runProject(event) {
     seedDraftFile: $("runSeedDraft").value,
     offline: $("offline").checked,
     allowAgentTools: $("allowAgentTools").checked,
+    allowLocalAgents: $("allowLocalAgents").checked,
     reviewers: $("reviewers").value,
     data: $("runData").value,
     references: $("runReferences").value,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from .local_providers import discover_local_model_presets, local_cli_configured
+from .local_providers import CCSwitchProfile, discover_cc_switch_profiles, discover_local_model_presets, local_cli_configured
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,7 @@ MODEL_PRESETS: tuple[ModelPreset, ...] = (
     ),
     ModelPreset("deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek", "deepseek-v4-pro", ("coding", "analysis")),
     ModelPreset("deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek", "deepseek-v4-flash", ("iteration", "coding")),
+    ModelPreset("minimax-m3", "MiniMax M3", "minimax", "minimax-m3", ("creative", "writing", "reasoning")),
     ModelPreset("minimax-m2.7", "MiniMax M2.7", "minimax", "minimax-m2.7", ("creative", "writing", "reasoning")),
     ModelPreset("minimax-m2.5", "MiniMax M2.5", "minimax", "minimax-m2.5", ("creative", "writing")),
     ModelPreset("minimax-m2.1", "MiniMax M2.1", "minimax", "minimax-m2.1", ("creative", "writing")),
@@ -241,6 +242,18 @@ def _catalog_model_presets() -> tuple[ModelPreset, ...]:
                 endpoint=local.endpoint,
             )
         )
+    for profile in discover_cc_switch_profiles():
+        for model in _cc_switch_api_model_variants(profile):
+            presets.append(
+                ModelPreset(
+                    id=f"cc-switch-api-{profile.id}-{_preset_id(model)}",
+                    name=f"cc-switch API: {profile.name} ({model})",
+                    provider="anthropic",
+                    model=model,
+                    capabilities=("api", "writing", "review", "cc-switch"),
+                    endpoint=f"cc-switch:{profile.id}",
+                )
+            )
 
     seen: set[str] = set()
     unique: list[ModelPreset] = []
@@ -251,3 +264,37 @@ def _catalog_model_presets() -> tuple[ModelPreset, ...]:
         seen.add(key)
         unique.append(preset)
     return tuple(unique)
+
+
+def _preset_id(value: str) -> str:
+    return "".join(char if char.isalnum() else "-" for char in value.lower()).strip("-") or "model"
+
+
+def _cc_switch_api_model_variants(profile: CCSwitchProfile) -> tuple[str, ...]:
+    env = profile.env
+    if not _has_cc_switch_anthropic_api(env):
+        return ()
+    values = list(profile.models or (profile.model,))
+    identity = f"{profile.id} {profile.name} {' '.join(values)}".lower()
+    if "glm" in identity:
+        values.extend(["glm-5.2", "glm-5.1"])
+    return tuple(_dedupe_values(values))
+
+
+def _has_cc_switch_anthropic_api(env: object) -> bool:
+    if not isinstance(env, dict):
+        return False
+    endpoint = env.get("ANTHROPIC_BASE_URL") or env.get("ANTHROPIC_ENDPOINT")
+    token = env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY")
+    return bool(endpoint and token)
+
+
+def _dedupe_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique

@@ -28,6 +28,7 @@ class CCSwitchProfile:
     name: str
     model: str
     env: dict[str, str]
+    models: tuple[str, ...] = ()
 
 
 def local_cli_configured(provider: str) -> bool:
@@ -57,16 +58,18 @@ def discover_local_model_presets(cwd: Path | None = None) -> list[LocalModelPres
     ]
 
     for profile in discover_cc_switch_profiles(cwd):
-        presets.append(
-            LocalModelPreset(
-                id=f"cc-switch-{profile.id}",
-                name=f"cc-switch: {profile.name}",
-                provider="claude-code",
-                model=profile.model,
-                capabilities=("local", "writing", "review", "cc-switch"),
-                endpoint=f"cc-switch:{profile.id}",
+        for model in _profile_model_variants(profile):
+            suffix = "" if model == profile.model else f"-{_slugify(model)}"
+            presets.append(
+                LocalModelPreset(
+                    id=f"cc-switch-{profile.id}{suffix}",
+                    name=f"cc-switch: {profile.name} ({model})",
+                    provider="claude-code",
+                    model=model,
+                    capabilities=("local", "writing", "review", "cc-switch", "terminal"),
+                    endpoint=f"cc-switch:{profile.id}",
+                )
             )
-        )
     return _dedupe_presets(presets)
 
 
@@ -248,20 +251,14 @@ def _named_dict_items(value: Any) -> list[tuple[str, dict[str, Any]]]:
 
 def _profile_from_mapping(fallback_name: str, data: dict[str, Any], path: Path) -> CCSwitchProfile | None:
     env = _env_from_mapping(data)
-    model = _first_string(
-        data.get("model"),
-        data.get("defaultModel"),
-        data.get("ANTHROPIC_MODEL"),
-        env.get("ANTHROPIC_MODEL"),
-        env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-        _first_from_iterable(data.get("models")),
-    )
-    if not model:
+    models = _model_values(data, env)
+    if not models:
         return None
+    model = models[0]
 
     name = _first_string(data.get("name"), data.get("label"), data.get("provider"), fallback_name) or fallback_name
     profile_id = _slugify(_first_string(data.get("id"), data.get("key"), fallback_name, path.stem) or fallback_name)
-    return CCSwitchProfile(id=profile_id, name=name, model=model, env=env)
+    return CCSwitchProfile(id=profile_id, name=name, model=model, env=env, models=tuple(models))
 
 
 def _env_from_mapping(data: dict[str, Any]) -> dict[str, str]:
@@ -305,6 +302,54 @@ def _first_from_iterable(value: Any) -> str | None:
             if found:
                 return found
     return None
+
+
+def _model_values(data: dict[str, Any], env: dict[str, str]) -> list[str]:
+    values: list[str] = []
+    for value in (
+        data.get("model"),
+        data.get("defaultModel"),
+        data.get("ANTHROPIC_MODEL"),
+        env.get("ANTHROPIC_MODEL"),
+        env.get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+        env.get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+        env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+    ):
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    for key in ("models", "availableModels", "modelList", "model_list"):
+        raw = data.get(key)
+        if isinstance(raw, dict):
+            raw = raw.values()
+        if isinstance(raw, Iterable) and not isinstance(raw, (str, bytes)):
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    values.append(item.strip())
+                elif isinstance(item, dict):
+                    found = _first_string(item.get("model"), item.get("name"), item.get("id"))
+                    if found:
+                        values.append(found)
+    return _dedupe_strings(values)
+
+
+def _profile_model_variants(profile: CCSwitchProfile) -> tuple[str, ...]:
+    values = list(profile.models or (profile.model,))
+    identity = f"{profile.id} {profile.name} {' '.join(values)}".lower()
+    if "glm" in identity:
+        values.extend(["glm-5.2", "glm-5.1"])
+    return tuple(_dedupe_strings(values))
+
+
+def _dedupe_strings(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
 
 
 def _dedupe_presets(presets: list[LocalModelPreset]) -> list[LocalModelPreset]:

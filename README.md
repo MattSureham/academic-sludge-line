@@ -217,7 +217,9 @@ asl run papers/demo-policy-paper \
 ```
 
 Use `ASL_CLAUDE_CODE_TOOLS` to override the Claude Code tools list, and
-`ASL_CODEX_TOOL_ARGS` to override the Codex tool/search arguments.
+`ASL_CODEX_TOOL_ARGS` to override the Codex tool/search arguments. Claude Code
+and Codex terminal subprocesses are enabled by default; pass `--no-local-agents`
+or turn off Terminal providers in the Web UI to prevent ASL from spawning them.
 
 ## Web UI
 
@@ -239,6 +241,10 @@ iteration creates one new `vN` version and runs the full plan/draft/review/
 revision/score/render sequence. It uses the same provider/model catalog as the
 CLI and defaults the local OpenAI-compatible vLLM preset to
 `http://127.0.0.1:8000/v1`.
+
+In the Run tab, Terminal providers controls whether selected `claude-code:*`
+and `codex:*` routes can spawn local subprocesses. Agent web/tools is separate:
+it only controls whether those subprocesses may use their own web/tool flags.
 
 For rewrite projects, the first run imports the seed draft as the accepted `v1`
 baseline before any model rewriting. The first requested iteration then creates
@@ -364,7 +370,7 @@ asl run papers/demo-policy-paper \
 
 The provider catalog follows the adjacent teamagents setup. Presets include
 DeepSeek (`deepseek-chat`, `deepseek-reasoner`, `deepseek-v4-pro`,
-`deepseek-v4-flash`), MiniMax (`minimax-m2.7`, `minimax-m2.5`,
+`deepseek-v4-flash`), MiniMax (`minimax-m3`, `minimax-m2.7`, `minimax-m2.5`,
 `minimax-m2.1`, `minimax-m1`, `abab6.5s-chat`), Qwen, Kimi, Kimi Code, vLLM,
 LM Studio, Ollama, OpenAI, Anthropic, and Gemini.
 
@@ -404,6 +410,24 @@ claude-code:deepseek-v4-pro@cc-switch:deepseek
 When such a route is used, ASL passes that cc-switch profile to Claude Code via a
 temporary settings payload. Secrets are not written to paper metadata or the UI
 catalog. Codex still uses its own local Codex CLI configuration.
+
+If a cc-switch profile exposes an Anthropic-compatible API endpoint and token,
+ASL also adds direct API routes such as:
+
+```text
+anthropic:glm-5.2@cc-switch:zhipu-glm
+anthropic:glm-5.1@cc-switch:zhipu-glm
+```
+
+That is useful when you want the same cc-switch provider credentials but need to
+call several models from that provider. Alternatives still work left to right,
+including alternatives from the same provider:
+
+```bash
+asl run papers/demo-policy-paper \
+  --draft-model minimax:minimax-m3,minimax:minimax-m2.7 \
+  --score-model anthropic:glm-5.2@cc-switch:zhipu-glm,anthropic:glm-5.1@cc-switch:zhipu-glm
+```
 
 ## Design
 

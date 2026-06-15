@@ -29,6 +29,7 @@ ROLE_SCORE = "score"
 MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION, ROLE_SCORE)
 LOCAL_AGENT_TIMEOUT_SECONDS = int(os.getenv("ASL_LOCAL_AGENT_TIMEOUT", "300"))
 LOCAL_AGENT_DEFAULT_MODEL_NAMES = {"", "default", "configured", "local"}
+LOCAL_AGENT_PROVIDERS = {"claude-code", "codex"}
 AGENT_TOOL_POLICY = (
     "If you use web tools, list the URLs and a short source note in your final answer. "
     "Do not cite a web source unless you actually inspected it."
@@ -105,9 +106,11 @@ class LLMClient:
         model: str | None = None,
         model_routes: Mapping[str, str] | None = None,
         allow_agent_tools: bool = False,
+        allow_local_agents: bool = True,
     ) -> None:
         self.offline = offline
         self.allow_agent_tools = allow_agent_tools
+        self.allow_local_agents = allow_local_agents
         self.routes = ModelRoutes.build(default_model=model, routes=model_routes)
         default = self.routes.for_role(ROLE_DEFAULT)[0]
         self.api_key = _api_key_for(default)
@@ -124,6 +127,7 @@ class LLMClient:
             offline=self.offline,
             model_routes=self.routes.with_overrides(routes).raw,
             allow_agent_tools=self.allow_agent_tools,
+            allow_local_agents=self.allow_local_agents,
         )
 
     def route_metadata(self) -> dict[str, list[str]]:
@@ -138,6 +142,10 @@ class LLMClient:
         for spec in self.routes.for_role(role):
             if spec.provider in {"offline", "template"}:
                 return LLMResult(text=fallback, provider="offline", model="template", attempts=tuple(attempts))
+
+            if self._local_agent_disabled(spec):
+                attempts.append(f"{spec.label}: local terminal providers disabled")
+                continue
 
             if not _spec_available(spec):
                 attempts.append(f"{spec.label}: missing credentials or endpoint")
@@ -180,6 +188,9 @@ class LLMClient:
     def generate_one(self, prompt: str, fallback: str, spec: ModelSpec) -> LLMResult:
         if spec.provider in {"offline", "template"}:
             return LLMResult(text=fallback, provider="offline", model="template")
+        if self._local_agent_disabled(spec):
+            attempt = f"{spec.label}: local terminal providers disabled"
+            return LLMResult(text=fallback, provider="offline", model="template", attempts=(attempt,))
         if not _spec_available(spec):
             attempt = f"{spec.label}: missing credentials or endpoint"
             return LLMResult(text=fallback, provider="offline", model="template", attempts=(attempt,))
@@ -225,6 +236,9 @@ class LLMClient:
         if spec.provider == "codex":
             return _call_codex_cli(spec, prompt, allow_tools=self.allow_agent_tools)
         raise ValueError(f"unsupported provider: {spec.provider}")
+
+    def _local_agent_disabled(self, spec: ModelSpec) -> bool:
+        return spec.provider in LOCAL_AGENT_PROVIDERS and not self.allow_local_agents
 
 
 def parse_model_chain(value: str) -> tuple[ModelSpec, ...]:
@@ -294,10 +308,7 @@ def _call_anthropic(spec: ModelSpec, prompt: str) -> str:
     body = _post_json(
         _endpoint_for(spec, "/messages"),
         payload,
-        {
-            "x-api-key": _api_key_for(spec),
-            "anthropic-version": "2023-06-01",
-        },
+        _anthropic_headers(spec),
     )
     chunks = []
     for item in body.get("content", []):
@@ -368,7 +379,7 @@ def _call_claude_code(spec: ModelSpec, prompt: str, allow_tools: bool = False) -
     if spec.model not in LOCAL_AGENT_DEFAULT_MODEL_NAMES:
         args.extend(["--model", spec.model])
 
-    settings = cc_switch_settings_for_ref(spec.endpoint)
+    settings = _cc_switch_settings_with_model(spec)
     if settings:
         args.extend(["--settings", json.dumps(settings)])
 
@@ -495,7 +506,7 @@ def _post_json(url: str, payload: dict, headers: dict[str, str]) -> dict:
 
 
 def _endpoint_for(spec: ModelSpec, path: str) -> str:
-    endpoint = spec.endpoint or _env_endpoint_for(spec.provider) or _default_endpoint_for(spec.provider)
+    endpoint = _cc_switch_endpoint_for(spec) or spec.endpoint or _env_endpoint_for(spec.provider) or _default_endpoint_for(spec.provider)
     endpoint = endpoint.rstrip("/")
     if endpoint.endswith(path):
         return endpoint
@@ -516,6 +527,10 @@ def _env_endpoint_for(provider: str) -> str:
 
 
 def _api_key_for(spec: ModelSpec) -> str:
+    cc_switch_key = _cc_switch_api_key_for(spec)
+    if cc_switch_key:
+        return cc_switch_key
+
     provider = spec.provider
     prefix = _provider_env_prefix(provider)
     explicit = os.getenv(f"ASL_{prefix}_API_KEY", "")
@@ -525,6 +540,79 @@ def _api_key_for(spec: ModelSpec) -> str:
     entry = PROVIDERS.get(provider)
     for name in entry.api_key_envs if entry else ():
         value = os.getenv(name, "")
+        if value:
+            return value
+    return ""
+
+
+def _anthropic_headers(spec: ModelSpec) -> dict[str, str]:
+    headers = {"anthropic-version": "2023-06-01"}
+    env = _cc_switch_env_for(spec)
+    if env:
+        auth_token = env.get("ANTHROPIC_AUTH_TOKEN", "")
+        api_key = env.get("ANTHROPIC_API_KEY", "")
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
+        elif api_key:
+            headers["x-api-key"] = api_key
+        return headers
+    headers["x-api-key"] = _api_key_for(spec)
+    return headers
+
+
+def _cc_switch_settings_with_model(spec: ModelSpec) -> dict[str, dict[str, str]] | None:
+    settings = cc_switch_settings_for_ref(spec.endpoint)
+    if not settings:
+        return None
+    env = dict(settings.get("env", {}))
+    if spec.model not in LOCAL_AGENT_DEFAULT_MODEL_NAMES:
+        env["ANTHROPIC_MODEL"] = spec.model
+        env.setdefault("ANTHROPIC_DEFAULT_HAIKU_MODEL", spec.model)
+        env.setdefault("ANTHROPIC_DEFAULT_SONNET_MODEL", spec.model)
+        env.setdefault("ANTHROPIC_DEFAULT_OPUS_MODEL", spec.model)
+    return {"env": env}
+
+
+def _cc_switch_env_for(spec: ModelSpec) -> dict[str, str] | None:
+    settings = cc_switch_settings_for_ref(spec.endpoint)
+    if not settings:
+        return None
+    env = settings.get("env", {})
+    return dict(env) if isinstance(env, dict) else None
+
+
+def _cc_switch_endpoint_for(spec: ModelSpec) -> str:
+    env = _cc_switch_env_for(spec)
+    if not env:
+        return ""
+    prefix = _provider_env_prefix(spec.provider)
+    candidates = [
+        f"{prefix}_BASE_URL",
+        f"{prefix}_ENDPOINT",
+        f"{prefix}_API_BASE",
+        "BASE_URL",
+        "API_BASE_URL",
+        "OPENAI_BASE_URL",
+    ]
+    if spec.provider == "anthropic":
+        candidates = ["ANTHROPIC_BASE_URL", "ANTHROPIC_ENDPOINT", *candidates]
+    for key in candidates:
+        value = env.get(key, "")
+        if value:
+            return value
+    return ""
+
+
+def _cc_switch_api_key_for(spec: ModelSpec) -> str:
+    env = _cc_switch_env_for(spec)
+    if not env:
+        return ""
+    prefix = _provider_env_prefix(spec.provider)
+    candidates = [f"{prefix}_API_KEY", f"{prefix}_AUTH_TOKEN", "API_KEY", "AUTH_TOKEN", "TOKEN"]
+    if spec.provider == "anthropic":
+        candidates = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", *candidates]
+    for key in candidates:
+        value = env.get(key, "")
         if value:
             return value
     return ""
@@ -541,6 +629,8 @@ def _spec_available(spec: ModelSpec) -> bool:
         return bool(shutil.which(os.getenv("ASL_CLAUDE_CODE_COMMAND", "claude")))
     if spec.provider == "codex":
         return bool(shutil.which(os.getenv("ASL_CODEX_COMMAND", "codex")))
+    if spec.endpoint and spec.endpoint.startswith("cc-switch:"):
+        return bool(_cc_switch_endpoint_for(spec) and _cc_switch_api_key_for(spec))
     if spec.provider == "openai-compat":
         return bool(spec.endpoint or _env_endpoint_for(spec.provider) or _default_endpoint_for(spec.provider))
     return bool(_api_key_for(spec))

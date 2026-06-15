@@ -437,6 +437,12 @@ def test_ui_offline_checkbox_defaults_unchecked() -> None:
     assert "checked" not in offline_input
 
 
+def test_ui_terminal_provider_checkbox_defaults_checked() -> None:
+    terminal_input = _INDEX_HTML.split('id="allowLocalAgents"', 1)[1].split(">", 1)[0]
+
+    assert "checked" in terminal_input
+
+
 def test_ui_run_rejects_non_project_directory_with_files(tmp_path: Path) -> None:
     existing = tmp_path / "papers" / "not-a-project"
     existing.mkdir(parents=True)
@@ -604,6 +610,7 @@ def test_catalog_exposes_teamagents_provider_presets() -> None:
     providers = {provider["provider"]: provider for provider in catalog["providers"]}
 
     assert routes["deepseek-reasoner"] == "deepseek:deepseek-reasoner"
+    assert routes["minimax-m3"] == "minimax:minimax-m3"
     assert routes["minimax-m2.7"] == "minimax:minimax-m2.7"
     assert routes["vllm"].endswith("@http://127.0.0.1:8000/v1")
     assert providers["openai-compat"]["requiresApiKey"] is False
@@ -663,11 +670,47 @@ def test_catalog_exposes_local_agent_and_cc_switch_presets(
     assert routes["claude-code-local"] == "claude-code:claude-sonnet-test"
     assert routes["codex-local"] == "codex:gpt-test"
     assert routes["cc-switch-deepseek"] == "claude-code:deepseek-v4-pro@cc-switch:deepseek"
+    assert routes["cc-switch-api-deepseek-deepseek-v4-pro"] == "anthropic:deepseek-v4-pro@cc-switch:deepseek"
     assert providers["claude-code"]["configured"] is True
     assert providers["codex"]["configured"] is True
 
     settings = cc_switch_settings_for_ref("cc-switch:deepseek", cwd=tmp_path)
     assert settings and settings["env"]["ANTHROPIC_MODEL"] == "deepseek-v4-pro"
+
+
+def test_catalog_expands_cc_switch_glm_model_variants(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cc_switch = tmp_path / "cc-switch.json"
+    cc_switch.write_text(
+        """
+        {
+          "providers": {
+            "zhipu-glm": {
+              "name": "Zhipu GLM",
+              "env": {
+                "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "fake-token",
+                "ANTHROPIC_MODEL": "glm-5.2"
+              }
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ASL_CC_SWITCH_CONFIG", str(cc_switch))
+    monkeypatch.setattr("asl.local_providers.shutil.which", lambda command: "/usr/bin/claude")
+
+    catalog = catalog_payload()
+    routes = {model["id"]: model["route"] for model in catalog["models"]}
+    route_values = set(routes.values())
+
+    assert routes["cc-switch-zhipu-glm"] == "claude-code:glm-5.2@cc-switch:zhipu-glm"
+    assert "claude-code:glm-5.1@cc-switch:zhipu-glm" in route_values
+    assert "anthropic:glm-5.2@cc-switch:zhipu-glm" in route_values
+    assert "anthropic:glm-5.1@cc-switch:zhipu-glm" in route_values
 
 
 def test_cc_switch_sqlite_profiles_are_discovered(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -735,7 +778,68 @@ def test_llm_client_calls_claude_code_with_cc_switch_settings(
     assert "--settings" in command
     settings = command[command.index("--settings") + 1]
     assert "fake-token" in settings
+    assert json.loads(settings)["env"]["ANTHROPIC_MODEL"] == "deepseek-v4-pro"
     assert calls[0][1]["input"].startswith("You are assisting with transparent academic drafting")
+
+
+def test_llm_client_calls_cc_switch_anthropic_api_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cc_switch = tmp_path / "cc-switch.json"
+    cc_switch.write_text(
+        """
+        {
+          "providers": {
+            "zhipu-glm": {
+              "env": {
+                "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "fake-token",
+                "ANTHROPIC_MODEL": "glm-5.2"
+              }
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    captured = {}
+    monkeypatch.setenv("ASL_CC_SWITCH_CONFIG", str(cc_switch))
+
+    def fake_urlopen(request: object, timeout: int) -> object:
+        captured["url"] = getattr(request, "full_url")
+        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
+        captured["payload"] = _request_json(request)
+        return _JsonResponse({"content": [{"type": "text", "text": "glm ok"}]})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = LLMClient(model_routes={"draft": "anthropic:glm-5.1@cc-switch:zhipu-glm"})
+
+    result = client.generate("Draft this.", "fallback", role="draft")
+
+    assert result.text == "glm ok"
+    assert result.provider == "anthropic"
+    assert captured["url"] == "https://open.bigmodel.cn/api/anthropic/messages"
+    assert captured["payload"]["model"] == "glm-5.1"
+    assert captured["headers"]["authorization"] == "Bearer fake-token"
+
+
+def test_llm_client_can_disable_local_terminal_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("asl.llm.shutil.which", lambda command: "/usr/bin/claude")
+
+    def fail_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("local agent subprocess should not run")
+
+    monkeypatch.setattr("asl.llm.subprocess.run", fail_run)
+    client = LLMClient(
+        model_routes={"draft": "claude-code:default"},
+        allow_local_agents=False,
+    )
+
+    result = client.generate("Draft this.", "fallback", role="draft")
+
+    assert result.provider == "offline-after-error"
+    assert "local terminal providers disabled" in result.attempts[0]
 
 
 def test_llm_client_can_allow_claude_code_web_tools(monkeypatch: pytest.MonkeyPatch) -> None:

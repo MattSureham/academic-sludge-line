@@ -59,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="allow Claude Code/Codex local providers to use configured tools such as web search",
     )
     run.add_argument(
+        "--no-local-agents",
+        action="store_true",
+        help="disable Claude Code/Codex terminal subprocess providers for this run",
+    )
+    run.add_argument(
         "--web-research",
         action="store_true",
         help="run an auditable web-research stage before planning and drafting",
@@ -126,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         reviewers = tuple(r.strip() for r in args.reviewers.split(",") if r.strip())
         pipeline = PaperPipeline(
             args.project_dir,
-            client=LLMClient(offline=args.offline, model=args.model, allow_agent_tools=args.allow_agent_tools),
+            client=LLMClient(
+                offline=args.offline,
+                model=args.model,
+                allow_agent_tools=args.allow_agent_tools,
+                allow_local_agents=not args.no_local_agents,
+            ),
             data_paths=tuple(args.data),
             reference_paths=tuple(args.references),
             smart_loader_path=args.smart_loader,
