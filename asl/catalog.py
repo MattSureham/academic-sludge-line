@@ -254,6 +254,17 @@ def _catalog_model_presets() -> tuple[ModelPreset, ...]:
                     endpoint=f"cc-switch:{profile.id}",
                 )
             )
+        for provider, model in _cc_switch_openai_model_variants(profile):
+            presets.append(
+                ModelPreset(
+                    id=f"cc-switch-openai-{profile.id}-{_preset_id(model)}",
+                    name=f"cc-switch {provider}: {profile.name} ({model})",
+                    provider=provider,
+                    model=model,
+                    capabilities=("api", "writing", "review", "cc-switch"),
+                    endpoint=f"cc-switch:{profile.id}",
+                )
+            )
 
     seen: set[str] = set()
     unique: list[ModelPreset] = []
@@ -279,6 +290,18 @@ def _cc_switch_api_model_variants(profile: CCSwitchProfile) -> tuple[str, ...]:
     if "glm" in identity:
         values.extend(["glm-5.2", "glm-5.1"])
     return tuple(_dedupe_values(values))
+
+
+def _cc_switch_openai_model_variants(profile: CCSwitchProfile) -> list[tuple[str, str]]:
+    env = profile.env
+    if not env.get("OPENAI_BASE_URL"):
+        return []
+    provider = env.get("ASL_PROVIDER", "openai-compat")
+    values = list(profile.models or (profile.model,))
+    identity = f"{profile.id} {profile.name} {' '.join(values)}".lower()
+    if "glm" in identity:
+        values.extend(["glm-5.2", "glm-5.1"])
+    return [(provider, model) for model in _dedupe_values(values)]
 
 
 def _has_cc_switch_anthropic_api(env: object) -> bool:

@@ -55,6 +55,7 @@ from .workspace import (
 DEFAULT_REVIEWERS = ("methods", "evidence", "style")
 START_MODES = ("from-scratch", "discover-topic", "rewrite")
 TEXT_SEED_DRAFT_SUFFIXES = {".md", ".markdown", ".txt", ".tex", ".rst"}
+DRAFT_PROMPT_BUDGET = 20_000
 
 
 def init_project(
@@ -156,6 +157,7 @@ class PaperPipeline:
         seed_draft_path: Path | None = None,
         web_research_settings: WebResearchSettings | None = None,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
+        prompt_budget: int = DRAFT_PROMPT_BUDGET,
     ) -> None:
         self.project_dir = project_dir.resolve()
         self.client = client or LLMClient()
@@ -196,6 +198,7 @@ class PaperPipeline:
         self.resolved_smart_loader_path: Path | None = None
         self.web_research_settings = web_research_settings or WebResearchSettings()
         self.progress_callback = progress_callback
+        self.prompt_budget = prompt_budget
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
@@ -317,9 +320,10 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
+        draft_brief = _trim_brief_for_budget(brief, plan.text, previous_draft, self.prompt_budget)
         draft = _generate(
             self.client,
-            draft_prompt(working_manifest, plan.text, brief, previous_draft),
+            draft_prompt(working_manifest, plan.text, draft_brief, previous_draft),
             offline_draft(working_manifest, plan.text, brief, previous_draft),
             role="draft",
         )
@@ -828,3 +832,24 @@ def _extract_prefixed_line(text: str, prefix: str) -> str | None:
     pattern = re.compile(rf"^{re.escape(prefix)}:\s*(.+)$", flags=re.IGNORECASE | re.MULTILINE)
     match = pattern.search(text)
     return match.group(1).strip() if match else None
+
+
+def _trim_brief_for_budget(brief: str, plan: str, previous_draft: str | None, budget: int) -> str:
+    overhead = 800
+    plan_size = len(plan.strip()) if plan else 0
+    previous_size = min(len(previous_draft), 8000) if previous_draft else 0
+    available = budget - overhead - plan_size - previous_size
+    if available >= len(brief):
+        return brief
+    available = max(800, available)
+    marker = "\n## Loaded Data And References\n"
+    parts = brief.split(marker, 1)
+    if len(parts) == 2:
+        base_brief = parts[0]
+        ref_section = parts[1]
+        ref_budget = max(400, available - len(base_brief))
+        if len(ref_section) <= ref_budget:
+            return brief
+        clipped = ref_section[:ref_budget].rstrip()
+        return f"{base_brief}{marker}{clipped}\n\n[TRUNCATED: {len(ref_section) - ref_budget} characters omitted to fit model context]"
+    return brief[:available].rstrip()

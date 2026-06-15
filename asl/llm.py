@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import shlex
 import shutil
 import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from http.client import IncompleteRead
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from .catalog import PROVIDERS
 from .local_providers import cc_switch_settings_for_ref
@@ -30,6 +32,8 @@ MODEL_ROLES = (ROLE_DEFAULT, ROLE_PLAN, ROLE_DRAFT, ROLE_REVIEW, ROLE_REVISION, 
 LOCAL_AGENT_TIMEOUT_SECONDS = int(os.getenv("ASL_LOCAL_AGENT_TIMEOUT", "300"))
 LOCAL_AGENT_DEFAULT_MODEL_NAMES = {"", "default", "configured", "local"}
 LOCAL_AGENT_PROVIDERS = {"claude-code", "codex"}
+RETRYABLE_ERRORS = (urllib.error.URLError, TimeoutError, IncompleteRead, ConnectionError, ConnectionResetError, BrokenPipeError, OSError)
+MAX_RETRIES = int(os.getenv("ASL_MAX_RETRIES", "2"))
 AGENT_TOOL_POLICY = (
     "If you use web tools, list the URLs and a short source note in your final answer. "
     "Do not cite a web source unless you actually inspected it."
@@ -43,6 +47,10 @@ _GENERATION_ERRORS = (
     ValueError,
     OSError,
     subprocess.TimeoutExpired,
+    IncompleteRead,
+    ConnectionError,
+    ConnectionResetError,
+    BrokenPipeError,
 )
 
 
@@ -219,22 +227,36 @@ class LLMClient:
         )
 
     def _generate_with_spec(self, spec: ModelSpec, prompt: str) -> str:
+        caller = self._caller_for_spec(spec)
+        last_error = None
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                return caller(spec, prompt)
+            except RETRYABLE_ERRORS as exc:
+                last_error = exc
+                if attempt < MAX_RETRIES:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+        raise last_error  # type: ignore[misc]
+
+    def _caller_for_spec(self, spec: ModelSpec) -> Callable[[ModelSpec, str], str]:
         if spec.provider == "openai":
-            return _call_openai_responses(spec, prompt)
+            return _call_openai_responses
         if spec.provider == "anthropic":
-            return _call_anthropic(spec, prompt)
+            return _call_anthropic
         if spec.provider == "gemini":
-            return _call_gemini(spec, prompt)
+            return _call_gemini
         if spec.provider == "ollama":
-            return _call_ollama(spec, prompt)
+            return _call_ollama
         if spec.provider == "minimax":
-            return _call_minimax(spec, prompt)
+            return _call_minimax
         if spec.provider in {"deepseek", "qwen", "kimi", "kimi-code", "openai-compat"}:
-            return _call_chat_completions(spec, prompt)
+            return _call_chat_completions
         if spec.provider == "claude-code":
-            return _call_claude_code(spec, prompt, allow_tools=self.allow_agent_tools)
+            return lambda s, p: _call_claude_code(s, p, allow_tools=self.allow_agent_tools)
         if spec.provider == "codex":
-            return _call_codex_cli(spec, prompt, allow_tools=self.allow_agent_tools)
+            return lambda s, p: _call_codex_cli(s, p, allow_tools=self.allow_agent_tools)
         raise ValueError(f"unsupported provider: {spec.provider}")
 
     def _local_agent_disabled(self, spec: ModelSpec) -> bool:
@@ -611,6 +633,8 @@ def _cc_switch_api_key_for(spec: ModelSpec) -> str:
     candidates = [f"{prefix}_API_KEY", f"{prefix}_AUTH_TOKEN", "API_KEY", "AUTH_TOKEN", "TOKEN"]
     if spec.provider == "anthropic":
         candidates = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", *candidates]
+    else:
+        candidates.extend(["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"])
     for key in candidates:
         value = env.get(key, "")
         if value:

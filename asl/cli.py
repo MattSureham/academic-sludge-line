@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import __version__
 from .llm import LLMClient
-from .pipeline import DEFAULT_REVIEWERS, START_MODES, PaperPipeline, init_project
+from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, START_MODES, PaperPipeline, init_project
 from .smart_loader import SmartLoaderSettings
 from .web_research import WebResearchSettings
 from .workspace import read_text
@@ -94,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=",".join(DEFAULT_REVIEWERS),
         help="comma-separated reviewer personas",
     )
+    run.add_argument(
+        "--max-prompt-chars",
+        type=int,
+        default=DRAFT_PROMPT_BUDGET,
+        help=f"maximum chars for the draft prompt (default: {DRAFT_PROMPT_BUDGET})",
+    )
 
     ui = sub.add_parser("ui", help="start the local web UI")
     ui.add_argument("--host", default="127.0.0.1", help="host to bind")
@@ -145,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             start_mode=args.start_mode,
             seed_draft_path=args.seed_draft_file,
             web_research_settings=_web_research_settings_from_args(args),
+            prompt_budget=args.max_prompt_chars,
         )
         created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         for path in created:
