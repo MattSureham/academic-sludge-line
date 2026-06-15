@@ -75,6 +75,42 @@ def draft_prompt(manifest: dict, plan: str, brief: str, previous: str | None = N
     return prompt
 
 
+def iterative_draft_prompt(
+    manifest: dict,
+    plan: str,
+    brief: str,
+    previous_draft: str,
+    review_summary: str,
+    revision_plan: str,
+) -> str:
+    prompt = dedent(
+        f"""
+        Improve this academic working-paper draft in Markdown. This is an
+        iteration cycle — a previous draft was reviewed and you should make
+        targeted improvements, not rewrite from scratch.
+
+        Title: {manifest["title"]}
+        Topic: {manifest["topic"]}
+
+        Rules:
+        - Use [TODO: citation] instead of fake citations.
+        - Use [TODO: evidence] instead of unsupported empirical claims.
+        - Do not report results unless they are supplied in the brief or plan.
+        - Preserve content that reviewers did not flag as problematic.
+        - Focus improvement effort on the review findings and revision checklist
+          below rather than reorganising sections that reviewers accepted.
+
+        Review findings:
+        """
+    ).strip()
+    prompt = f"{prompt}\n{_excerpt(review_summary, 4000)}"
+    prompt += f"\n\nRevision checklist:\n{_excerpt(revision_plan, 3000)}"
+    prompt += f"\n\nBrief:\n{brief.strip() or 'TODO'}"
+    prompt += f"\n\nResearch plan:\n{plan.strip() or 'TODO'}"
+    prompt += f"\n\nPrevious draft to improve:\n{_excerpt(previous_draft, 16000)}"
+    return prompt
+
+
 def review_prompt(manifest: dict, draft: str, reviewer: str) -> str:
     prompt = dedent(
         f"""

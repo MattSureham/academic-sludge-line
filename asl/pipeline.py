@@ -19,6 +19,7 @@ from .smart_loader import (
 )
 from .templates import (
     draft_prompt,
+    iterative_draft_prompt,
     offline_draft,
     offline_plan,
     offline_review,
@@ -320,13 +321,33 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
-        draft_brief = _trim_brief_for_budget(brief, plan.text, previous_draft, self.prompt_budget)
-        draft = _generate(
-            self.client,
-            draft_prompt(working_manifest, plan.text, draft_brief, previous_draft),
-            offline_draft(working_manifest, plan.text, brief, previous_draft),
-            role="draft",
-        )
+        is_iterative = _is_iterative_cycle(previous_dir)
+        if is_iterative:
+            review_summary = _read_previous_reviews(previous_dir)
+            revision_plan_text = _read_previous_revision_plan(previous_dir)
+            review_cost = min(len(review_summary), 4000) + min(len(revision_plan_text), 3000)
+            iterative_budget = self.prompt_budget + review_cost + 8000
+            draft_brief = _trim_brief_for_budget(
+                brief, plan.text, previous_draft, iterative_budget,
+                previous_draft_budget=16000, extra_costs=review_cost,
+            )
+            draft = _generate(
+                self.client,
+                iterative_draft_prompt(
+                    working_manifest, plan.text, draft_brief, previous_draft,
+                    review_summary, revision_plan_text,
+                ),
+                offline_draft(working_manifest, plan.text, brief, previous_draft),
+                role="draft",
+            )
+        else:
+            draft_brief = _trim_brief_for_budget(brief, plan.text, previous_draft, self.prompt_budget)
+            draft = _generate(
+                self.client,
+                draft_prompt(working_manifest, plan.text, draft_brief, previous_draft),
+                offline_draft(working_manifest, plan.text, brief, previous_draft),
+                role="draft",
+            )
         write_text(version_dir / "draft.md", draft.text)
 
         review_texts = []
@@ -834,11 +855,14 @@ def _extract_prefixed_line(text: str, prefix: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def _trim_brief_for_budget(brief: str, plan: str, previous_draft: str | None, budget: int) -> str:
+def _trim_brief_for_budget(
+    brief: str, plan: str, previous_draft: str | None, budget: int,
+    previous_draft_budget: int = 8000, extra_costs: int = 0,
+) -> str:
     overhead = 800
     plan_size = len(plan.strip()) if plan else 0
-    previous_size = min(len(previous_draft), 8000) if previous_draft else 0
-    available = budget - overhead - plan_size - previous_size
+    previous_size = min(len(previous_draft), previous_draft_budget) if previous_draft else 0
+    available = budget - overhead - plan_size - previous_size - extra_costs
     if available >= len(brief):
         return brief
     available = max(800, available)
@@ -853,3 +877,31 @@ def _trim_brief_for_budget(brief: str, plan: str, previous_draft: str | None, bu
         clipped = ref_section[:ref_budget].rstrip()
         return f"{base_brief}{marker}{clipped}\n\n[TRUNCATED: {len(ref_section) - ref_budget} characters omitted to fit model context]"
     return brief[:available].rstrip()
+
+
+def _is_iterative_cycle(previous_dir: Path | None) -> bool:
+    if not previous_dir:
+        return False
+    reviews_dir = previous_dir / "reviews"
+    if not reviews_dir.exists():
+        return False
+    return any(reviews_dir.glob("*.md"))
+
+
+def _read_previous_reviews(version_dir: Path) -> str:
+    reviews_dir = version_dir / "reviews"
+    if not reviews_dir.exists():
+        return ""
+    sections = []
+    for path in sorted(reviews_dir.glob("*.md")):
+        content = read_text(path).strip()
+        if content:
+            sections.append(f"### {path.stem.title()} Review\n\n{content}")
+    return "\n\n".join(sections)
+
+
+def _read_previous_revision_plan(version_dir: Path) -> str:
+    path = version_dir / "revision_plan.md"
+    if not path.exists():
+        return ""
+    return read_text(path).strip()
