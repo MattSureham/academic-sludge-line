@@ -40,6 +40,7 @@ def run_ui(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False
 
 def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
     jobs: dict[str, _RunJob] = {}
+    project_jobs: dict[str, str] = {}
     jobs_lock = threading.Lock()
 
     class ASLUIHandler(BaseHTTPRequestHandler):
@@ -94,7 +95,7 @@ def _handler_factory(cwd: Path) -> type[BaseHTTPRequestHandler]:
                     self._send_json(_create_project(payload, cwd))
                     return
                 if parsed.path == "/api/run":
-                    self._send_json(_start_run_job(payload, cwd, jobs, jobs_lock))
+                    self._send_json(_start_run_job(payload, cwd, jobs, project_jobs, jobs_lock))
                     return
                 if parsed.path == "/api/mkdir":
                     self._send_json(_create_directory(payload, cwd))
@@ -166,8 +167,9 @@ def _project_title(payload: dict) -> str:
 
 
 class _RunJob:
-    def __init__(self, job_id: str) -> None:
+    def __init__(self, job_id: str, project_dir: Path) -> None:
         self.id = job_id
+        self.project_dir = project_dir
         self.status = "queued"
         self.created_at = time.time()
         self.started_at: float | None = None
@@ -213,6 +215,7 @@ class _RunJob:
             start = self.started_at or self.created_at
             return {
                 "id": self.id,
+                "projectDir": str(self.project_dir),
                 "status": self.status,
                 "createdAt": self.created_at,
                 "startedAt": self.started_at,
@@ -231,10 +234,26 @@ class _RunJob:
             self.events = self.events[-80:]
 
 
-def _start_run_job(payload: dict, cwd: Path, jobs: dict[str, _RunJob], jobs_lock: threading.Lock) -> dict:
-    job = _RunJob(uuid.uuid4().hex[:12])
+def _start_run_job(
+    payload: dict,
+    cwd: Path,
+    jobs: dict[str, _RunJob],
+    project_jobs: dict[str, str],
+    jobs_lock: threading.Lock,
+) -> dict:
+    project_dir = _resolve_path(payload["projectDir"], cwd)
+    project_key = str(project_dir)
     with jobs_lock:
+        existing_id = project_jobs.get(project_key)
+        existing = jobs.get(existing_id or "")
+        if existing and existing.status in {"queued", "running"}:
+            return {"jobId": existing.id, "job": existing.snapshot(), "reused": True}
+        if existing_id:
+            project_jobs.pop(project_key, None)
+
+        job = _RunJob(uuid.uuid4().hex[:12], project_dir)
         jobs[job.id] = job
+        project_jobs[project_key] = job.id
 
     def worker() -> None:
         job.mark_running()
@@ -242,12 +261,16 @@ def _start_run_job(payload: dict, cwd: Path, jobs: dict[str, _RunJob], jobs_lock
             result = _run_project(payload, cwd, progress=job.update)
         except Exception as exc:  # noqa: BLE001 - surfaced to the local UI.
             job.fail(str(exc), traceback.format_exc())
-            return
-        job.finish(result)
+        else:
+            job.finish(result)
+        finally:
+            with jobs_lock:
+                if project_jobs.get(project_key) == job.id:
+                    project_jobs.pop(project_key, None)
 
     thread = threading.Thread(target=worker, name=f"asl-run-{job.id}", daemon=True)
     thread.start()
-    return {"jobId": job.id, "job": job.snapshot()}
+    return {"jobId": job.id, "job": job.snapshot(), "reused": False}
 
 
 def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]], None] | None = None) -> dict:
@@ -1826,7 +1849,7 @@ async function runProject(event) {
     const result = await api("/api/run", { method: "POST", body: JSON.stringify(payload) });
     state.activeRunJobId = result.jobId;
     renderRunJob(result.job);
-    setStatus("Running");
+    setStatus(result.reused ? "Already running" : "Running");
     await pollRunJob(result.jobId);
   } catch (error) {
     setRunControls(false);

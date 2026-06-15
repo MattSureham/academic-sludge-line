@@ -394,6 +394,7 @@ def _call_codex_cli(spec: ModelSpec, prompt: str, allow_tools: bool = False) -> 
             output_path = Path(output.name)
 
         args = [command]
+        args.extend(_codex_approval_args())
         if allow_tools:
             args.extend(_codex_tool_args())
         args.extend(
@@ -403,8 +404,6 @@ def _call_codex_cli(spec: ModelSpec, prompt: str, allow_tools: bool = False) -> 
                 str(Path.cwd()),
                 "--sandbox",
                 "read-only",
-                "--ask-for-approval",
-                "never",
                 "--skip-git-repo-check",
                 "--color",
                 "never",
@@ -445,6 +444,13 @@ def _codex_tool_args() -> list[str]:
     if raw:
         return shlex.split(raw)
     return ["--search"]
+
+
+def _codex_approval_args() -> list[str]:
+    raw = os.getenv("ASL_CODEX_APPROVAL_ARGS")
+    if raw is not None:
+        return shlex.split(raw)
+    return ["--ask-for-approval", "never"]
 
 
 def _agent_prompt(prompt: str, allow_tools: bool = False) -> str:

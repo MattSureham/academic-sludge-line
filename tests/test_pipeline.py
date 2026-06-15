@@ -1,6 +1,8 @@
 import sys
 import subprocess
 import sqlite3
+import threading
+import time
 import urllib.error
 from pathlib import Path
 from typing import Optional
@@ -22,7 +24,7 @@ from asl.templates import (
     offline_revision,
     plan_prompt,
 )
-from asl.ui import _browse_payload, _create_directory, _create_project
+from asl.ui import _browse_payload, _create_directory, _create_project, _start_run_job
 from asl.web_research import WebResearchSettings, WebSource
 from asl.workspace import read_json
 
@@ -351,6 +353,62 @@ def test_ui_create_project_allows_blank_title(tmp_path: Path) -> None:
     assert manifest["title"] == "transparent public program evaluation"
 
 
+def test_ui_reuses_existing_running_job_for_same_project(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="locked-run",
+        title="Locked Run",
+        topic="prevent duplicate runs",
+        brief="Only one job should run per project.",
+    )
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def fake_run_project(payload: dict, cwd: Path, progress: object = None) -> dict:
+        calls.append(payload["projectDir"])
+        started.set()
+        release.wait(timeout=2)
+        return {
+            "created": [],
+            "project": {
+                "path": str(project),
+                "manifest": {},
+                "versions": [],
+                "acceptedVersion": None,
+                "latest": {},
+            },
+            "latest": {},
+        }
+
+    monkeypatch.setattr("asl.ui._run_project", fake_run_project)
+    jobs = {}
+    project_jobs = {}
+    lock = threading.Lock()
+    payload = {"projectDir": str(project)}
+
+    first = _start_run_job(payload, tmp_path, jobs, project_jobs, lock)
+    assert first["reused"] is False
+    assert started.wait(timeout=1)
+
+    second = _start_run_job(payload, tmp_path, jobs, project_jobs, lock)
+    assert second["reused"] is True
+    assert second["jobId"] == first["jobId"]
+    assert len(calls) == 1
+
+    release.set()
+    for _ in range(20):
+        if jobs[first["jobId"]].snapshot()["status"] == "succeeded":
+            break
+        time.sleep(0.05)
+
+    assert jobs[first["jobId"]].snapshot()["status"] == "succeeded"
+    assert project_jobs == {}
+
+
 def test_llm_failure_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_urlopen(*args: object, **kwargs: object) -> None:
         raise urllib.error.URLError("network unavailable")
@@ -598,7 +656,13 @@ def test_llm_client_reads_codex_exec_last_message(monkeypatch: pytest.MonkeyPatc
 
     assert result.text == "codex draft"
     command = calls[0][0]
-    assert command[:2] == ["codex", "exec"]
+    exec_index = command.index("exec")
+    approval_index = command.index("--ask-for-approval")
+    assert command[0] == "codex"
+    assert approval_index < exec_index
+    assert command[approval_index + 1] == "never"
+    assert "--ask-for-approval" not in command[exec_index:]
+    assert command[command.index("--sandbox") + 1] == "read-only"
     assert "--model" in command
     assert "gpt-test" in command
     assert calls[0][1]["input"].startswith("You are assisting with transparent academic drafting")
@@ -622,7 +686,12 @@ def test_llm_client_can_enable_codex_web_search(monkeypatch: pytest.MonkeyPatch,
 
     assert result.text == "codex web draft"
     command = calls[0][0]
-    assert command[:3] == ["codex", "--search", "exec"]
+    exec_index = command.index("exec")
+    approval_index = command.index("--ask-for-approval")
+    assert command[0] == "codex"
+    assert "--search" in command[:exec_index]
+    assert approval_index < exec_index
+    assert command[approval_index + 1] == "never"
     assert "If you use web tools" in calls[0][1]["input"]
 
 
