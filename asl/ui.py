@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from . import __version__
 from .catalog import catalog_payload
 from .llm import LLMClient
-from .pipeline import DEFAULT_REVIEWERS, PaperPipeline, init_project, init_project_at
+from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, PaperPipeline, init_project, init_project_at
 from .smart_loader import SmartLoader, SmartLoaderSettings
 from .web_research import WebResearchSettings
 from .workspace import read_json, read_text
@@ -305,6 +305,9 @@ def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]
         start_mode=payload.get("startMode") or None,
         seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
         web_research_settings=_web_research_settings(payload.get("webResearch", {})),
+        from_version=payload.get("fromVersion") or None,
+        additional_context=payload.get("additionalContext") or None,
+        prompt_budget=_int_setting(payload.get("maxPromptChars"), DRAFT_PROMPT_BUDGET),
         progress_callback=progress,
     )
     created = pipeline.run(cycles=max(1, int(payload.get("cycles") or 1)), reviewers=reviewers)
@@ -760,6 +763,20 @@ _INDEX_HTML = """<!doctype html>
             </div>
           </label>
         </div>
+        <div class="inline-fields">
+          <label>Start from version
+            <select id="fromVersion">
+              <option value="">Latest accepted</option>
+            </select>
+            <span class="field-note">Override the baseline draft for this run.</span>
+          </label>
+          <label>Max prompt chars
+            <input id="maxPromptChars" type="number" min="5000" value="20000">
+          </label>
+        </div>
+        <label>Focus guidance
+          <textarea id="focusGuidance" rows="3" placeholder="Additional context or direction for the next draft..."></textarea>
+        </label>
         <label class="checkline">
           <input id="offline" name="offline" type="checkbox">
           Offline
@@ -1813,6 +1830,23 @@ async function loadProject(projectDir) {
   }
 }
 
+function populateFromVersion(project) {
+  const select = $("fromVersion");
+  const current = select.value;
+  select.innerHTML = '<option value="">Latest accepted</option>';
+  for (const version of (project.versions || [])) {
+    const option = document.createElement("option");
+    option.value = version.name;
+    const meta = version.metadata || {};
+    const score = meta.quality_score != null ? ` · score ${meta.quality_score}` : "";
+    option.textContent = `${version.name}${score}`;
+    select.appendChild(option);
+  }
+  if (current && [...select.options].some((o) => o.value === current)) {
+    select.value = current;
+  }
+}
+
 function renderProject(project) {
   const manifest = project.manifest || {};
   const latest = project.latest || {};
@@ -1844,6 +1878,7 @@ function renderProject(project) {
   }
   const modelSummary = renderModelSummary(latest);
   if (modelSummary) summary.appendChild(modelSummary);
+  populateFromVersion(project);
   renderFileTabs();
 }
 
@@ -2182,6 +2217,9 @@ async function runProject(event) {
     cycles: $("cycles").value,
     startMode: $("runStartMode").value,
     seedDraftFile: $("runSeedDraft").value,
+    fromVersion: $("fromVersion").value,
+    additionalContext: $("focusGuidance").value,
+    maxPromptChars: $("maxPromptChars").value,
     offline: $("offline").checked,
     allowAgentTools: $("allowAgentTools").checked,
     allowLocalAgents: $("allowLocalAgents").checked,
