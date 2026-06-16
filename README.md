@@ -261,6 +261,13 @@ CLI and defaults the local OpenAI-compatible vLLM preset to
 In the Run tab, Terminal providers controls whether selected `claude-code:*`
 and `codex:*` routes can spawn local subprocesses. Agent web/tools is separate:
 it only controls whether those subprocesses may use their own web/tool flags.
+The Run tab also has human intervention controls:
+
+- Start from version chooses a specific existing `vN` draft as the next
+  baseline instead of the latest accepted draft.
+- Focus guidance injects reviewer/editor instructions into the next draft.
+- Max prompt chars controls the draft prompt budget before long loaded
+  references are trimmed.
 
 For rewrite projects, the first run imports the seed draft as the accepted `v1`
 baseline before any model rewriting. The first requested iteration then creates
@@ -309,6 +316,25 @@ asl init \
 planning and drafting. `rewrite` uses the previous accepted draft, or the seed
 draft if there is no accepted version yet.
 
+From the second generated version onward, ASL treats the previous reviewed
+version as an iteration target. The draft prompt includes the previous reviews
+and revision plan, asks the model to preserve unflagged content, and focuses the
+next draft on reviewer findings instead of rewriting from scratch.
+
+You can direct a run from the CLI:
+
+```bash
+asl run papers/fixed-topic \
+  --from v2 \
+  --focus "Strengthen methods and address the LMIC evidence gap." \
+  --max-prompt-chars 30000
+```
+
+`--from` changes the draft baseline for the next candidate. The quality gate
+still compares the candidate against the latest accepted version, so exploratory
+work from an older checkpoint does not silently replace a stronger accepted
+draft. `--focus` is saved into the prompt record as additional guidance.
+
 Every run still writes a candidate `vN/` directory, but ASL now maintains an
 `accepted_version.txt` pointer. If the score gate judges the candidate worse
 than the previous accepted draft, the candidate is kept as a rejected version and
@@ -341,7 +367,8 @@ asl run papers/demo-policy-paper --cycles 1
 ```
 
 If the API call fails, the pipeline falls back to the offline template and
-records that in the generated text.
+records that in the generated text. Transient network failures are retried
+before fallback; set `ASL_MAX_RETRIES` to change the retry count.
 
 ASL also supports teamagents-style model routes:
 
@@ -434,6 +461,18 @@ ASL also adds direct API routes such as:
 anthropic:glm-5.2@cc-switch:zhipu-glm
 anthropic:glm-5.1@cc-switch:zhipu-glm
 ```
+
+If that profile exposes an OpenAI-compatible endpoint such as `OPENAI_BASE_URL`,
+ASL also adds OpenAI-compatible routes:
+
+```text
+openai-compat:glm-5.2@cc-switch:zhipu-glm
+openai-compat:glm-5.1@cc-switch:zhipu-glm
+```
+
+These routes use the cc-switch endpoint and token. This matters for providers
+whose Anthropic-compatible endpoint is incomplete but whose OpenAI-compatible
+chat completions endpoint works.
 
 That is useful when you want the same cc-switch provider credentials but need to
 call several models from that provider. Alternatives still work left to right,

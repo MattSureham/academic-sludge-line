@@ -29,6 +29,7 @@ from asl.templates import (
     plan_prompt,
 )
 from asl.ui import (
+    _APP_JS,
     _INDEX_HTML,
     _browse_payload,
     _create_directory,
@@ -311,6 +312,58 @@ def test_web_research_outputs_are_saved_and_injected(monkeypatch: pytest.MonkeyP
     assert sources[0]["version"] == "v1"
 
 
+def test_from_version_focus_and_iterative_prompt_are_recorded(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="intervention",
+        title="Intervention",
+        topic="human directed revision",
+        brief="Use a careful evidence trail.",
+    )
+    PaperPipeline(project, client=_CapturingBetterClient()).run(cycles=2)
+    assert (project / "accepted_version.txt").read_text(encoding="utf-8").strip() == "v2"
+
+    client = _CapturingBetterClient()
+    created = PaperPipeline(
+        project,
+        client=client,
+        from_version="v1",
+        additional_context="Tighten the methods section and preserve the framing.",
+        prompt_budget=6_000,
+    ).run()[0]
+
+    metadata = read_json(created / "metadata.json")
+    assert metadata["previous_version"] == "v1"
+    assert metadata["previous_accepted_version"] == "v2"
+    assert metadata["previous_draft_source"] == "version_v1"
+    assert metadata["quality_gate"]["previous_version"] == "v2"
+
+    draft_prompt_text = client.prompt_for_role("draft")
+    assert "iteration cycle" in draft_prompt_text
+    assert "Review findings:" in draft_prompt_text
+    assert "Revision checklist:" in draft_prompt_text
+    assert "Tighten the methods section" in draft_prompt_text
+    assert "Additional Guidance" in (created / "prompt.md").read_text(encoding="utf-8")
+
+
+def test_prompt_budget_trims_loaded_context_before_drafting(tmp_path: Path) -> None:
+    long_reference_context = "REFERENCE CONTEXT " * 900
+    project = init_project(
+        root=tmp_path,
+        slug="prompt-budget",
+        title="Prompt Budget",
+        topic="bounded prompts",
+        brief=f"Base brief.\n\n## Loaded Data And References\n{long_reference_context}",
+    )
+    client = _CapturingBetterClient()
+
+    PaperPipeline(project, client=client, prompt_budget=5_000).run()
+
+    draft_prompt_text = client.prompt_for_role("draft")
+    assert "[TRUNCATED:" in draft_prompt_text
+    assert len(draft_prompt_text) < len(long_reference_context) + 3_000
+
+
 def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> None:
     version = tmp_path / "v1"
     reviews = version / "reviews"
@@ -441,6 +494,15 @@ def test_ui_terminal_provider_checkbox_defaults_checked() -> None:
     terminal_input = _INDEX_HTML.split('id="allowLocalAgents"', 1)[1].split(">", 1)[0]
 
     assert "checked" in terminal_input
+
+
+def test_ui_exposes_human_intervention_controls() -> None:
+    assert 'id="fromVersion"' in _INDEX_HTML
+    assert 'id="focusGuidance"' in _INDEX_HTML
+    assert 'id="maxPromptChars"' in _INDEX_HTML
+    assert 'fromVersion: $("fromVersion").value' in _APP_JS
+    assert 'additionalContext: $("focusGuidance").value' in _APP_JS
+    assert 'maxPromptChars: $("maxPromptChars").value' in _APP_JS
 
 
 def test_ui_run_rejects_non_project_directory_with_files(tmp_path: Path) -> None:
@@ -713,6 +775,38 @@ def test_catalog_expands_cc_switch_glm_model_variants(
     assert "anthropic:glm-5.1@cc-switch:zhipu-glm" in route_values
 
 
+def test_catalog_exposes_cc_switch_openai_compatible_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cc_switch = tmp_path / "cc-switch.json"
+    cc_switch.write_text(
+        """
+        {
+          "providers": {
+            "zhipu-glm": {
+              "name": "Zhipu GLM",
+              "env": {
+                "OPENAI_BASE_URL": "https://open.bigmodel.cn/api/paas/v4",
+                "ANTHROPIC_AUTH_TOKEN": "fake-token",
+                "ANTHROPIC_MODEL": "glm-5.2"
+              }
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ASL_CC_SWITCH_CONFIG", str(cc_switch))
+
+    catalog = catalog_payload()
+    routes = {model["id"]: model["route"] for model in catalog["models"]}
+    route_values = set(routes.values())
+
+    assert "openai-compat:glm-5.2@cc-switch:zhipu-glm" in route_values
+    assert "openai-compat:glm-5.1@cc-switch:zhipu-glm" in route_values
+
+
 def test_cc_switch_sqlite_profiles_are_discovered(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     db_path = tmp_path / "cc-switch.db"
     conn = sqlite3.connect(db_path)
@@ -822,6 +916,70 @@ def test_llm_client_calls_cc_switch_anthropic_api_route(
     assert captured["url"] == "https://open.bigmodel.cn/api/anthropic/messages"
     assert captured["payload"]["model"] == "glm-5.1"
     assert captured["headers"]["authorization"] == "Bearer fake-token"
+
+
+def test_llm_client_calls_cc_switch_openai_compatible_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cc_switch = tmp_path / "cc-switch.json"
+    cc_switch.write_text(
+        """
+        {
+          "providers": {
+            "zhipu-glm": {
+              "env": {
+                "OPENAI_BASE_URL": "https://open.bigmodel.cn/api/paas/v4",
+                "ANTHROPIC_AUTH_TOKEN": "fake-token",
+                "ANTHROPIC_MODEL": "glm-5.2"
+              }
+            }
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+    captured = {}
+    monkeypatch.setenv("ASL_CC_SWITCH_CONFIG", str(cc_switch))
+
+    def fake_urlopen(request: object, timeout: int) -> object:
+        captured["url"] = getattr(request, "full_url")
+        captured["headers"] = {key.lower(): value for key, value in request.header_items()}
+        captured["payload"] = _request_json(request)
+        return _JsonResponse({"choices": [{"message": {"content": "glm ok"}}]})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = LLMClient(model_routes={"draft": "openai-compat:glm-5.1@cc-switch:zhipu-glm"})
+
+    result = client.generate("Draft this.", "fallback", role="draft")
+
+    assert result.text == "glm ok"
+    assert result.provider == "openai-compat"
+    assert captured["url"] == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    assert captured["payload"]["model"] == "glm-5.1"
+    assert captured["headers"]["authorization"] == "Bearer fake-token"
+
+
+def test_llm_client_retries_transient_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = []
+    sleeps = []
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr("asl.llm.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    def fake_urlopen(request: object, timeout: int) -> object:
+        attempts.append(getattr(request, "full_url"))
+        if len(attempts) == 1:
+            raise urllib.error.URLError("temporary disconnect")
+        return _JsonResponse({"output_text": "retry ok"})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    client = LLMClient(model_routes={"draft": "openai:gpt-retry"})
+
+    result = client.generate("Draft this.", "fallback", role="draft")
+
+    assert result.text == "retry ok"
+    assert len(attempts) == 2
+    assert sleeps == [1]
 
 
 def test_llm_client_can_disable_local_terminal_providers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1146,6 +1304,47 @@ def _request_json(request: object) -> dict:
 
     data = getattr(request, "data")
     return json.loads(data.decode("utf-8"))
+
+
+class _CapturingBetterClient:
+    def __init__(self) -> None:
+        self.prompts: list[tuple[str, str]] = []
+
+    def with_model_routes(self, routes: dict[str, str]) -> "_CapturingBetterClient":
+        return self
+
+    def route_metadata(self) -> dict[str, list[str]]:
+        return {"draft": ["fake:writer"], "score": ["fake:score"]}
+
+    def generate(self, prompt: str, fallback: str, role: str = "default") -> LLMResult:
+        self.prompts.append((role, prompt))
+        if role == "plan":
+            return LLMResult(text="# Research Plan\n\nConcise plan.", provider="fake", model="planner")
+        if role == "draft":
+            return LLMResult(text="# Model Draft\n\nSupported candidate.", provider="fake", model="writer")
+        if role == "review":
+            return LLMResult(text="# Review\n\nTighten evidence and methods.", provider="fake", model="reviewer")
+        if role == "revision":
+            return LLMResult(text="# Revision Plan\n\nAddress review findings.", provider="fake", model="reviser")
+        return LLMResult(text=fallback, provider="fake", model=f"{role}-fallback")
+
+    def generate_all(self, prompt: str, fallback: str, role: str) -> list[LLMResult]:
+        self.prompts.append((role, prompt))
+        if role == "score":
+            return [
+                LLMResult(
+                    text='{"verdict":"better","previous_score":5,"candidate_score":7,"rationale":"More responsive."}',
+                    provider="fake",
+                    model="score",
+                )
+            ]
+        return [self.generate(prompt, fallback, role=role)]
+
+    def prompt_for_role(self, role: str) -> str:
+        for found_role, prompt in reversed(self.prompts):
+            if found_role == role:
+                return prompt
+        raise AssertionError(f"no prompt captured for role {role}")
 
 
 class _WorseCandidateClient:
