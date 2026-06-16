@@ -8,6 +8,7 @@ from pathlib import Path
 from . import __version__
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, START_MODES, PaperPipeline, init_project
+from .reference_search import ReferenceSearchSettings
 from .smart_loader import SmartLoaderSettings
 from .web_research import WebResearchSettings
 from .workspace import read_text
@@ -70,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--web-research-max-queries", type=int, default=3, help="maximum generated web research queries")
     run.add_argument("--web-research-max-results", type=int, default=5, help="maximum web research results per query")
+    run.add_argument(
+        "--reference-search",
+        action="store_true",
+        help="search Crossref for candidate references from the paper topic before drafting",
+    )
+    run.add_argument("--reference-search-max-results", type=int, default=8, help="maximum reference candidates to collect")
     run.add_argument("--start-mode", choices=START_MODES, help="override paper starting mode")
     run.add_argument("--seed-draft-file", type=Path, help="existing draft to rewrite")
     run.add_argument("--model", help="default model route for this run")
@@ -161,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             start_mode=args.start_mode,
             seed_draft_path=args.seed_draft_file,
             web_research_settings=_web_research_settings_from_args(args),
+            reference_search_settings=_reference_search_settings_from_args(args),
             prompt_budget=args.max_prompt_chars,
             from_version=args.from_version,
             additional_context=args.additional_context,
@@ -231,6 +239,13 @@ def _web_research_settings_from_args(args: argparse.Namespace) -> WebResearchSet
         enabled=bool(getattr(args, "web_research", False)),
         max_queries=getattr(args, "web_research_max_queries", 3),
         max_results_per_query=getattr(args, "web_research_max_results", 5),
+    )
+
+
+def _reference_search_settings_from_args(args: argparse.Namespace) -> ReferenceSearchSettings:
+    return ReferenceSearchSettings(
+        enabled=bool(getattr(args, "reference_search", False)),
+        max_results=getattr(args, "reference_search_max_results", 8),
     )
 
 

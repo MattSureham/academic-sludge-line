@@ -20,6 +20,7 @@ from . import __version__
 from .catalog import catalog_payload
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, PaperPipeline, init_project, init_project_at
+from .reference_search import ReferenceSearchSettings
 from .smart_loader import SmartLoader, SmartLoaderSettings
 from .web_research import WebResearchSettings
 from .workspace import read_json, read_text
@@ -305,6 +306,7 @@ def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]
         start_mode=payload.get("startMode") or None,
         seed_draft_path=Path(payload["seedDraftFile"]) if payload.get("seedDraftFile") else None,
         web_research_settings=_web_research_settings(payload.get("webResearch", {})),
+        reference_search_settings=_reference_search_settings(payload.get("referenceSearch", {})),
         from_version=payload.get("fromVersion") or None,
         additional_context=payload.get("additionalContext") or None,
         prompt_budget=_int_setting(payload.get("maxPromptChars"), DRAFT_PROMPT_BUDGET),
@@ -386,6 +388,8 @@ def _version_payload(version_dir: Path) -> dict:
     files = {}
     for relative in (
         "topic_proposal.md",
+        "reference_search.md",
+        "reference_search.json",
         "web_research.md",
         "web_research.json",
         "research_plan.md",
@@ -667,6 +671,15 @@ def _web_research_settings(payload: object) -> WebResearchSettings:
     )
 
 
+def _reference_search_settings(payload: object) -> ReferenceSearchSettings:
+    if not isinstance(payload, dict):
+        payload = {}
+    return ReferenceSearchSettings(
+        enabled=_bool_setting(payload.get("enabled"), False),
+        max_results=_int_setting(payload.get("maxResults"), 8),
+    )
+
+
 def _bool_setting(value: object, default: bool) -> bool:
     if value is None:
         return default
@@ -787,6 +800,10 @@ _INDEX_HTML = """<!doctype html>
             Web research
           </label>
           <label class="checkline">
+            <input id="referenceSearch" type="checkbox">
+            Reference search
+          </label>
+          <label class="checkline">
             <input id="allowAgentTools" type="checkbox">
             Agent web/tools
           </label>
@@ -801,6 +818,9 @@ _INDEX_HTML = """<!doctype html>
           </label>
           <label>Results/query
             <input id="webResearchMaxResults" type="number" min="1" value="5">
+          </label>
+          <label>Max references
+            <input id="referenceSearchMaxResults" type="number" min="1" value="8">
           </label>
         </div>
         <div id="runModelRoutes" class="routes"></div>
@@ -1620,7 +1640,8 @@ const RUN_STAGE_PROGRESS = {
   seed_draft: 13,
   inputs: 18,
   topic_discovery: 28,
-  web_research: 34,
+  reference_search: 32,
+  web_research: 36,
   prompt_record: 42,
   plan: 50,
   draft: 62,
@@ -2238,6 +2259,10 @@ async function runProject(event) {
       enabled: $("webResearch").checked,
       maxQueries: $("webResearchMaxQueries").value,
       maxResultsPerQuery: $("webResearchMaxResults").value,
+    },
+    referenceSearch: {
+      enabled: $("referenceSearch").checked,
+      maxResults: $("referenceSearchMaxResults").value,
     },
     models: collectRoutes("runModelRoutes"),
   };

@@ -22,6 +22,7 @@ Current repo: `/Users/matthew/Projects/academic-sludge-line`
 | `asl/workspace.py` | File I/O helpers (read/write JSON, text), timestamp utils |
 | `asl/ui.py` | Web UI: HTTP server, HTML/CSS/JS, project listing, file browser, run job tracking |
 | `asl/smart_loader.py` | Adapter for the bundled smart-loader CLI (PDF/DOCX/XLSX → markdown) |
+| `asl/reference_search.py` | Auditable Crossref literature search from title/topic/research question |
 | `asl/web_research.py` | Auditable web search stage: generates queries, fetches results, writes to version dir |
 | `asl/html_render.py` | Markdown → HTML rendering for version HTML preview |
 
@@ -70,13 +71,16 @@ CLI:
 - `--from VERSION` — start from any checkpoint version instead of the accepted version. The quality gate still compares against the accepted version.
 - `--focus "guidance"` — inject additional context/prompt into the draft step.
 - `--references PATH` — add new reference files for this run.
+- `--reference-search` — search Crossref for candidate references based on the paper topic/research question.
+- `--reference-search-max-results N` (default 8) — controls the Crossref reference search size.
 - `--max-prompt-chars N` (default 20000) — controls total draft prompt size.
 
 Web UI:
 - **Start from version** dropdown — populated from project versions with quality scores. Overrides the baseline draft.
 - **Focus guidance** textarea — equivalent to `--focus`.
 - **Max prompt chars** input — equivalent to `--max-prompt-chars`.
-- All three are collected in the JS `runProject()` payload and passed to `PaperPipeline` via `_run_project()`.
+- **Reference search** checkbox + **Max references** input — equivalent to `--reference-search`.
+- These are collected in the JS `runProject()` payload and passed to `PaperPipeline` via `_run_project()`.
 
 Metadata records both `previous_version` (baseline for the draft) and `previous_accepted_version` (baseline for quality gate).
 
@@ -97,6 +101,18 @@ Bundled Node.js CLI (`smart-loader/`) that extracts structured text from input f
 Settings (configurable via CLI flags and Web UI):
 - `pdf_render_pages` (default true), `pdf_max_pages` (25), `pdf_dpi` (180)
 - `ocr_assets` (default true), `ocr_language` ("eng")
+
+## Reference search
+
+Optional bibliography-discovery stage (`--reference-search`) that:
+- Builds a Crossref query from `research_question`, topic, title, or brief.
+- Fetches candidate works from Crossref.
+- Writes `reference_search.md` and `reference_search.json` to the version directory.
+- Appends candidates to `sources.json` with `kind: "reference"`.
+- Injects `Reference Search Leads` into the draft prompt.
+
+Configure with `--reference-search-max-results` (default 8). These are leads only; verify metadata, relevance, and full text before citing.
+Set `ASL_CONTACT_EMAIL` to include a contact email in the Crossref User-Agent.
 
 ## Web research
 

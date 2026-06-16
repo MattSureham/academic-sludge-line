@@ -19,6 +19,7 @@ from asl.html_render import render_version_html
 from asl.local_providers import cc_switch_settings_for_ref
 from asl.llm import LLMClient, LLMResult, parse_model_chain
 from asl.pipeline import PaperPipeline, init_project
+from asl.reference_search import ReferenceCandidate, ReferenceSearchSettings
 from asl.smart_loader import SmartLoader
 from asl.templates import (
     draft_prompt,
@@ -312,6 +313,85 @@ def test_web_research_outputs_are_saved_and_injected(monkeypatch: pytest.MonkeyP
     assert sources[0]["version"] == "v1"
 
 
+def test_reference_search_outputs_are_saved_and_injected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def fake_search(query: str, max_results: int) -> list[ReferenceCandidate]:
+        assert "public program evidence" in query
+        assert max_results == 2
+        return [
+            ReferenceCandidate(
+                query=query,
+                title="Reference Evidence Paper",
+                authors=("Ada Researcher", "Ben Scholar"),
+                year="2024",
+                container="Journal of Evidence",
+                doi="10.1000/example",
+                url="https://doi.org/10.1000/example",
+                snippet="A relevant literature lead.",
+            )
+        ]
+
+    monkeypatch.setattr("asl.reference_search._search_crossref", fake_search)
+    project = init_project(
+        root=tmp_path,
+        slug="reference-search",
+        title="Reference Search",
+        topic="public program evidence",
+        brief="Find literature leads before drafting.",
+    )
+
+    created = PaperPipeline(
+        project,
+        client=LLMClient(offline=True),
+        reference_search_settings=ReferenceSearchSettings(enabled=True, max_results=2),
+    ).run()[0]
+
+    assert (created / "reference_search.md").exists()
+    assert (created / "reference_search.json").exists()
+    assert (created / "html" / "reference_search.html").exists()
+    assert "Reference Search Leads" in (created / "prompt.md").read_text(encoding="utf-8")
+    metadata = read_json(created / "metadata.json")
+    assert metadata["reference_search"]["enabled"] is True
+    assert metadata["reference_search"]["candidates"][0]["doi"] == "10.1000/example"
+    sources = read_json(project / "sources.json")
+    assert sources[0]["kind"] == "reference"
+    assert sources[0]["title"] == "Reference Evidence Paper"
+    assert sources[0]["version"] == "v1"
+
+
+def test_cli_reference_search_flag_runs_crossref_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "asl.reference_search._search_crossref",
+        lambda query, max_results: [
+            ReferenceCandidate(query=query, title="CLI Reference", url="https://example.test/reference")
+        ],
+    )
+    assert main(
+        [
+            "init",
+            "--root",
+            str(tmp_path),
+            "--slug",
+            "cli-reference-search",
+            "--title",
+            "CLI Reference Search",
+            "--topic",
+            "topic-led references",
+            "--brief",
+            "Find references.",
+        ]
+    ) == 0
+    project = tmp_path / "papers" / "cli-reference-search"
+
+    assert main(["run", str(project), "--offline", "--reference-search", "--reference-search-max-results", "1"]) == 0
+
+    assert (project / "v1" / "reference_search.md").exists()
+    metadata = read_json(project / "v1" / "metadata.json")
+    assert metadata["reference_search"]["candidates"][0]["title"] == "CLI Reference"
+
+
 def test_from_version_focus_and_iterative_prompt_are_recorded(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path,
@@ -500,9 +580,14 @@ def test_ui_exposes_human_intervention_controls() -> None:
     assert 'id="fromVersion"' in _INDEX_HTML
     assert 'id="focusGuidance"' in _INDEX_HTML
     assert 'id="maxPromptChars"' in _INDEX_HTML
+    assert 'id="referenceSearch"' in _INDEX_HTML
+    assert 'id="referenceSearchMaxResults"' in _INDEX_HTML
     assert 'fromVersion: $("fromVersion").value' in _APP_JS
     assert 'additionalContext: $("focusGuidance").value' in _APP_JS
     assert 'maxPromptChars: $("maxPromptChars").value' in _APP_JS
+    assert 'referenceSearch: {' in _APP_JS
+    assert 'enabled: $("referenceSearch").checked' in _APP_JS
+    assert 'maxResults: $("referenceSearchMaxResults").value' in _APP_JS
 
 
 def test_ui_run_rejects_non_project_directory_with_files(tmp_path: Path) -> None:

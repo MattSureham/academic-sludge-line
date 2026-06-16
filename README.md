@@ -185,9 +185,26 @@ For rewrite tasks, `--seed-draft-file` can point to Markdown/text directly or
 to a PDF/DOCX file. Non-text seed drafts are loaded through the same bundled
 loader and saved as `vN/inputs/seed_draft.md` plus `vN/html/inputs_seed_draft.html`.
 
-## Web Research And Agent Tools
+## Reference Search, Web Research And Agent Tools
 
-ASL has two separate online research controls.
+ASL has three separate online research controls.
+
+`--reference-search` searches Crossref for candidate literature references from
+the paper title, topic, and research question. It saves auditable results to
+`vN/reference_search.md` and `vN/reference_search.json`, appends candidates to
+the project's `sources.json`, and injects the leads into the planning/drafting
+prompt:
+
+```bash
+asl run papers/demo-policy-paper \
+  --reference-search \
+  --reference-search-max-results 8
+```
+
+Reference search is for bibliography discovery, not automatic citation. Treat
+the results as leads, then verify relevance, metadata, and full text before
+citing. Set `ASL_CONTACT_EMAIL` if you want ASL to include a contact email in
+the Crossref User-Agent.
 
 `--web-research` runs an auditable pre-drafting search stage. It builds a small
 set of queries from the paper title, topic, and research question, saves results
@@ -263,6 +280,8 @@ and `codex:*` routes can spawn local subprocesses. Agent web/tools is separate:
 it only controls whether those subprocesses may use their own web/tool flags.
 The Run tab also has human intervention controls:
 
+- Reference search queries Crossref for topic-matched candidate references and
+  writes `reference_search.md/json` into each version.
 - Start from version chooses a specific existing `vN` draft as the next
   baseline instead of the latest accepted draft.
 - Focus guidance injects reviewer/editor instructions into the next draft.

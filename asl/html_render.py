@@ -20,6 +20,8 @@ BASE_OUTPUT_ORDER = (
     "inputs/data.md",
     "inputs/references.md",
     "inputs/smart_loader.json",
+    "reference_search.md",
+    "reference_search.json",
     "web_research.md",
     "web_research.json",
     "research_plan.md",

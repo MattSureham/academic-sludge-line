@@ -10,6 +10,13 @@ from typing import Callable
 
 from .html_render import render_version_html
 from .llm import LLMClient
+from .reference_search import (
+    ReferenceSearchResult,
+    ReferenceSearchSettings,
+    append_reference_search_to_brief,
+    run_reference_search,
+    update_reference_sources_ledger,
+)
 from .smart_loader import (
     LoadedInputGroup,
     SmartLoader,
@@ -157,6 +164,7 @@ class PaperPipeline:
         start_mode: str | None = None,
         seed_draft_path: Path | None = None,
         web_research_settings: WebResearchSettings | None = None,
+        reference_search_settings: ReferenceSearchSettings | None = None,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
         prompt_budget: int = DRAFT_PROMPT_BUDGET,
         from_version: str | None = None,
@@ -200,6 +208,7 @@ class PaperPipeline:
         self.smart_loader_settings = smart_loader_settings or SmartLoaderSettings()
         self.resolved_smart_loader_path: Path | None = None
         self.web_research_settings = web_research_settings or WebResearchSettings()
+        self.reference_search_settings = reference_search_settings or ReferenceSearchSettings()
         self.progress_callback = progress_callback
         self.prompt_budget = prompt_budget
         self.from_version = from_version
@@ -283,6 +292,15 @@ class PaperPipeline:
         discovery = self._discover_topic_if_needed(version_dir, working_manifest, brief)
         if discovery:
             brief = f"{brief.strip() or 'TODO'}\n\n## Topic Discovery\n\n{discovery.text}"
+        self._emit_progress(
+            "reference_search",
+            "Searching reference candidates" if self.reference_search_settings.enabled else "Skipping reference search",
+            cycle=cycle,
+            total_cycles=total_cycles,
+            version=version_dir.name,
+        )
+        reference_search = self._run_reference_search(version_dir, working_manifest, brief)
+        brief = append_reference_search_to_brief(brief, reference_search)
         self._emit_progress(
             "web_research",
             "Running web research" if self.web_research_settings.enabled else "Skipping web research",
@@ -444,11 +462,13 @@ class PaperPipeline:
                 "settings": asdict(self.smart_loader_settings),
             },
             "web_research": web_research.metadata(),
+            "reference_search": reference_search.metadata(),
             "loaded_seed_draft": loaded_seed_draft.metadata() if loaded_seed_draft else None,
             "loaded_inputs": [group.metadata() for group in loaded_inputs],
             "outputs": [
                 "prompt.md",
                 *(["inputs/"] if loaded_inputs or loaded_seed_draft or previous_draft_source == "seed_draft" else []),
+                *(["reference_search.md", "reference_search.json"] if reference_search.enabled else []),
                 *(["web_research.md", "web_research.json"] if web_research.enabled else []),
                 "research_plan.md",
                 "draft.md",
@@ -520,6 +540,10 @@ class PaperPipeline:
                 enabled=False,
                 provider=self.web_research_settings.provider,
             ).metadata(),
+            "reference_search": ReferenceSearchResult(
+                enabled=False,
+                provider=self.reference_search_settings.provider,
+            ).metadata(),
             "loaded_seed_draft": loaded_seed_draft.metadata() if loaded_seed_draft else None,
             "loaded_inputs": [],
             "outputs": [
@@ -549,6 +573,11 @@ class PaperPipeline:
     def _run_web_research(self, version_dir: Path, manifest: dict, brief: str) -> WebResearchResult:
         result = run_web_research(manifest, brief, version_dir, self.web_research_settings)
         update_sources_ledger(self.project_dir, version_dir.name, result)
+        return result
+
+    def _run_reference_search(self, version_dir: Path, manifest: dict, brief: str) -> ReferenceSearchResult:
+        result = run_reference_search(manifest, brief, version_dir, self.reference_search_settings)
+        update_reference_sources_ledger(self.project_dir, version_dir.name, result)
         return result
 
     def _load_inputs(self, version_dir: Path) -> list[LoadedInputGroup]:
