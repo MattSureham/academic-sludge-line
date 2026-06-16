@@ -9,13 +9,30 @@ Current repo: `/Users/matthew/Projects/academic-sludge-line`
 - Fallback or lower-quality candidates are kept but do not replace `accepted_version.txt`.
 - Web UI at `http://127.0.0.1:8765`.
 
+## Source files
+
+| File | Purpose |
+|------|---------|
+| `asl/cli.py` | CLI argument parsing, wires args to `PaperPipeline` |
+| `asl/pipeline.py` | Core orchestration: cycles, versioning, quality gate, prompt budget |
+| `asl/templates.py` | All LLM prompt templates (plan, draft, iterative draft, review, revision, score) |
+| `asl/llm.py` | LLM client: routing, retry, cc-switch key lookup, anthropic/openai-compat/deepseek/minimax/claude-code backends |
+| `asl/catalog.py` | Provider/model discovery from cc-switch profiles and local agents |
+| `asl/local_providers.py` | cc-switch SQLite profile parsing, Claude Code/Codex binary discovery |
+| `asl/workspace.py` | File I/O helpers (read/write JSON, text), timestamp utils |
+| `asl/ui.py` | Web UI: HTTP server, HTML/CSS/JS, project listing, file browser, run job tracking |
+| `asl/smart_loader.py` | Adapter for the bundled smart-loader CLI (PDF/DOCX/XLSX → markdown) |
+| `asl/web_research.py` | Auditable web search stage: generates queries, fetches results, writes to version dir |
+| `asl/html_render.py` | Markdown → HTML rendering for version HTML preview |
+
 ## Model routing
 
-cc-switch profiles are discovered from local JSON/SQLite config. Routes available:
+cc-switch profiles are discovered from local `~/.cc-switch/cc-switch.db` (SQLite). Routes available:
 
 | Pattern | Example | Notes |
 |---------|---------|-------|
 | `claude-code:MODEL@cc-switch:PROFILE` | `claude-code:glm-5.1@cc-switch:zhipu-glm` | Terminal subprocess |
+| `codex:MODEL@cc-switch:PROFILE` | `codex:MODEL@cc-switch:PROFILE` | OpenAI Codex CLI subprocess |
 | `anthropic:MODEL@cc-switch:PROFILE` | `anthropic:deepseek-v4-pro@cc-switch:deepseek` | Anthropic Messages API |
 | `openai-compat:MODEL@cc-switch:PROFILE` | `openai-compat:glm-5.1@cc-switch:zhipu-glm` | OpenAI chat completions API |
 | `deepseek:MODEL@cc-switch:PROFILE` | `deepseek:deepseek-v4-pro@cc-switch:deepseek` | Native provider via cc-switch creds |
@@ -26,6 +43,18 @@ Key routing details:
 - The `openai-compat` route is needed for Zhipu GLM because its Anthropic-compatible endpoint (`/api/anthropic`) returns 404; the OpenAI-compatible endpoint (`/api/paas/v4`) works.
 - `_cc_switch_api_key_for` falls back to `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` for non-anthropic providers, so native provider routes (e.g. `deepseek:`) work with cc-switch credentials.
 - Model chains with `,` separator try each model in order (fallback on failure).
+- `--no-local-agents` disables Claude Code/Codex terminal subprocess providers.
+- `--allow-agent-tools` lets terminal providers use tools like web search.
+
+## Start modes
+
+Three ways to begin a paper:
+
+| Mode | Behaviour |
+|------|-----------|
+| `from-scratch` | Draft from topic + brief + references. Default. |
+| `discover-topic` | LLM discovers a topic and research question from the supplied data before drafting. |
+| `rewrite` | Takes a seed draft file (PDF/DOCX/markdown), extracts text via smart-loader, and rewrites it with evidence discipline. |
 
 ## Iterative improvement mechanism
 
@@ -37,10 +66,19 @@ Starting from the second cycle, the pipeline detects that a previous version has
 
 ## Human-directed intervention
 
+CLI:
 - `--from VERSION` — start from any checkpoint version instead of the accepted version. The quality gate still compares against the accepted version.
 - `--focus "guidance"` — inject additional context/prompt into the draft step.
 - `--references PATH` — add new reference files for this run.
-- Metadata records both `previous_version` (baseline for the draft) and `previous_accepted_version` (baseline for quality gate).
+- `--max-prompt-chars N` (default 20000) — controls total draft prompt size.
+
+Web UI:
+- **Start from version** dropdown — populated from project versions with quality scores. Overrides the baseline draft.
+- **Focus guidance** textarea — equivalent to `--focus`.
+- **Max prompt chars** input — equivalent to `--max-prompt-chars`.
+- All three are collected in the JS `runProject()` payload and passed to `PaperPipeline` via `_run_project()`.
+
+Metadata records both `previous_version` (baseline for the draft) and `previous_accepted_version` (baseline for quality gate).
 
 ## Prompt budget
 
@@ -48,10 +86,40 @@ Starting from the second cycle, the pipeline detects that a previous version has
 - Reference context is trimmed first when the budget is exceeded, preserving plan and previous draft.
 - For iterative cycles the effective budget is larger to accommodate review/revision content.
 
+## smart-loader
+
+Bundled Node.js CLI (`smart-loader/`) that extracts structured text from input files:
+- PDF: renders pages as images, OCRs via tesseract, extracts text with metadata.
+- DOCX: converts to markdown with document structure.
+- XLSX/CSV: converts to markdown tables.
+- Plain text/markdown: passes through.
+
+Settings (configurable via CLI flags and Web UI):
+- `pdf_render_pages` (default true), `pdf_max_pages` (25), `pdf_dpi` (180)
+- `ocr_assets` (default true), `ocr_language` ("eng")
+
+## Web research
+
+Optional pre-draft stage (`--web-research`) that:
+- Generates search queries from the topic and research plan.
+- Fetches results via DuckDuckGo (no API key needed).
+- Writes `web_research.md` and `web_research.json` to the version directory.
+- Results feed into the draft prompt as additional context.
+
+Configure with `--web-research-max-queries` (default 3) and `--web-research-max-results` (default 5).
+
 ## Network resilience
 
 - `_generate_with_spec` retries up to `ASL_MAX_RETRIES` (default 2) with exponential backoff on transient errors (`RemoteDisconnected`, `IncompleteRead`, `ConnectionReset`, etc.).
 - `_GENERATION_ERRORS` includes `IncompleteRead`, `ConnectionError`, `ConnectionResetError`, `BrokenPipeError` so the pipeline never crashes on network failures.
+
+## Web UI architecture
+
+The UI (`asl/ui.py`) is a single-file HTTP server with embedded HTML/CSS/JS:
+- **Backend**: `ThreadingHTTPServer` + `BaseHTTPRequestHandler`. Routes: `/` (index), `/app.css`, `/app.js`, `/api/catalog`, `/api/browse`, `/api/projects`, `/api/project`, `/api/jobs/<id>`, `/api/init`, `/api/run`, `/api/mkdir`.
+- **Frontend**: Vanilla JS (no framework). Tabs: Run, New Paper, Providers. File browser modal for path selection. Real-time job progress polling.
+- **Run jobs**: Background threads with `_RunJob` state machine (queued → running → succeeded/failed). Progress events streamed via polling `/api/jobs/<id>`.
+- **Project auto-creation**: Typing a non-existent `papers/<slug>` path into the Run form auto-creates it on submit (calls `init_project_at`).
 
 ## Useful checks
 
@@ -77,6 +145,10 @@ asl run papers/demo --from v2 \
 asl run papers/demo \
   --draft-model minimax:minimax-m3,minimax:minimax-m2.7 \
   --no-local-agents
+
+# Web research + iterative cycles
+asl run papers/demo --cycles 3 --web-research \
+  --draft-model deepseek:deepseek-v4-pro@cc-switch:deepseek
 ```
 
 Do not print or commit cc-switch API keys. The catalog and metadata should expose routes but not secrets.
