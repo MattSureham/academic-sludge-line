@@ -14,7 +14,7 @@ import urllib.request
 from http.client import IncompleteRead
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .catalog import PROVIDERS
 from .local_providers import cc_switch_settings_for_ref
@@ -140,6 +140,35 @@ class LLMClient:
 
     def route_metadata(self) -> dict[str, list[str]]:
         return self.routes.metadata()
+
+    def unavailable_roles(self, roles: Iterable[str]) -> dict[str, list[str]]:
+        """Roles that configured a real model but have no usable spec.
+
+        Returns {role: [reasons]} only for roles where a non-offline model was
+        requested yet none of its specs are reachable, so the role would
+        silently fall back to the offline template. Offline mode and roles whose
+        route is purely offline/template are intentional and never reported.
+        """
+        if self.offline:
+            return {}
+        problems: dict[str, list[str]] = {}
+        for role in dict.fromkeys(roles):
+            reasons: list[str] = []
+            has_real = False
+            available = False
+            for spec in self.routes.for_role(role):
+                if spec.provider in {"offline", "template"}:
+                    continue
+                has_real = True
+                if self._local_agent_disabled(spec):
+                    reasons.append(f"{spec.label}: local terminal providers disabled")
+                elif not _spec_available(spec):
+                    reasons.append(f"{spec.label}: missing credentials or endpoint")
+                else:
+                    available = True
+            if has_real and not available:
+                problems[role] = reasons
+        return problems
 
     def generate(self, prompt: str, fallback: str, role: str = ROLE_DEFAULT) -> LLMResult:
         if not self.available:

@@ -64,6 +64,11 @@ DEFAULT_REVIEWERS = ("methods", "evidence", "style")
 START_MODES = ("from-scratch", "discover-topic", "rewrite")
 TEXT_SEED_DRAFT_SUFFIXES = {".md", ".markdown", ".txt", ".tex", ".rst"}
 DRAFT_PROMPT_BUDGET = 20_000
+PIPELINE_ROLES = ("plan", "draft", "review", "revision", "score")
+
+
+class ModelUnavailableError(RuntimeError):
+    """A configured model for a pipeline role cannot run (e.g. missing credentials)."""
 
 
 def init_project(
@@ -216,6 +221,7 @@ class PaperPipeline:
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
+        self._preflight_models()
         self._ensure_seed_baseline()
         total_cycles = max(1, cycles)
         baseline_override = _resolve_from_version(self.project_dir, self.from_version)
@@ -231,6 +237,24 @@ class PaperPipeline:
                 override_baseline_dir=baseline_override if index == 0 else None,
             ))
         return created
+
+    def _preflight_models(self) -> None:
+        checker = getattr(self.client, "unavailable_roles", None)
+        if checker is None:
+            return
+        problems = checker(PIPELINE_ROLES)
+        if not problems:
+            return
+        lines = [
+            f"  - {role}: {'; '.join(reasons) if reasons else 'no available model'}"
+            for role, reasons in problems.items()
+        ]
+        raise ModelUnavailableError(
+            "Configured models are unavailable for these pipeline roles, so they would "
+            "silently fall back to the offline template. Fix the credentials/routes "
+            "(e.g. add the cc-switch profile suffix) or pass --offline to accept template "
+            "output:\n" + "\n".join(lines)
+        )
 
     def _run_one_cycle(self, reviewers: tuple[str, ...], cycle: int = 1, total_cycles: int = 1, override_baseline_dir: Path | None = None) -> Path:
         version = next_version(self.project_dir)
@@ -635,6 +659,9 @@ class PaperPipeline:
     def _discover_topic_if_needed(self, version_dir: Path, manifest: dict, brief: str) -> object | None:
         if self.start_mode != "discover-topic":
             return None
+        # Discover once: later cycles reuse the persisted topic so versions don't drift.
+        if not _topic_is_placeholder(manifest.get("topic")):
+            return None
 
         discovery = _generate(
             self.client,
@@ -647,9 +674,22 @@ class PaperPipeline:
         research_question = _extract_prefixed_line(discovery.text, "Research question")
         if topic:
             manifest["topic"] = topic
+            if _title_is_placeholder(manifest.get("title")):
+                manifest["title"] = topic
         if research_question:
             manifest["research_question"] = research_question
+        if topic or research_question:
+            self._persist_topic_discovery(manifest)
         return discovery
+
+    def _persist_topic_discovery(self, manifest: dict) -> None:
+        for key in ("title", "topic", "research_question"):
+            if key in manifest:
+                self.manifest[key] = manifest[key]
+        task = self.manifest.get("task")
+        if isinstance(task, dict) and not _topic_is_placeholder(self.manifest.get("topic")):
+            task["topic_locked"] = True
+        write_json(self.project_dir / "project.json", self.manifest)
 
     def _quality_gate(
         self,
@@ -894,6 +934,18 @@ def _extract_prefixed_line(text: str, prefix: str) -> str | None:
     pattern = re.compile(rf"^{re.escape(prefix)}:\s*(.+)$", flags=re.IGNORECASE | re.MULTILINE)
     match = pattern.search(text)
     return match.group(1).strip() if match else None
+
+
+def _topic_is_placeholder(topic: str | None) -> bool:
+    if not topic or not topic.strip():
+        return True
+    return topic.strip().upper().startswith("TODO")
+
+
+def _title_is_placeholder(title: str | None) -> bool:
+    if not title or not title.strip():
+        return True
+    return title.strip().lower().startswith("untitled")
 
 
 def _trim_brief_for_budget(

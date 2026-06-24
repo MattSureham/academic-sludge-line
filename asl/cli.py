@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from . import __version__
 from .llm import LLMClient
-from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, START_MODES, PaperPipeline, init_project
+from .pipeline import (
+    DEFAULT_REVIEWERS,
+    DRAFT_PROMPT_BUDGET,
+    START_MODES,
+    ModelUnavailableError,
+    PaperPipeline,
+    init_project,
+)
 from .reference_search import ReferenceSearchSettings
 from .smart_loader import SmartLoaderSettings
 from .web_research import WebResearchSettings
@@ -173,7 +181,11 @@ def main(argv: list[str] | None = None) -> int:
             from_version=args.from_version,
             additional_context=args.additional_context,
         )
-        created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
+        try:
+            created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
+        except ModelUnavailableError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         for path in created:
             print(path)
         return 0

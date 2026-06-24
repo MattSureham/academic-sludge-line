@@ -18,7 +18,7 @@ from asl.cli import main
 from asl.html_render import render_version_html
 from asl.local_providers import cc_switch_settings_for_ref
 from asl.llm import LLMClient, LLMResult, parse_model_chain
-from asl.pipeline import PaperPipeline, init_project
+from asl.pipeline import ModelUnavailableError, PaperPipeline, init_project
 from asl.reference_search import ReferenceCandidate, ReferenceSearchSettings
 from asl.smart_loader import SmartLoader
 from asl.templates import (
@@ -1209,6 +1209,48 @@ def test_discover_topic_mode_can_start_without_fixed_topic(tmp_path: Path) -> No
     metadata = read_json(project / "v1" / "metadata.json")
     assert metadata["start_mode"] == "discover-topic"
     assert metadata["accepted"] is True
+
+
+def test_discover_topic_writes_back_title_and_persists(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="untitled-paper",
+        title="Untitled Paper",
+        topic=None,
+        start_mode="discover-topic",
+        brief="Dataset: municipal program outcomes.",
+    )
+    PaperPipeline(project, client=LLMClient(offline=True)).run(cycles=2)
+
+    manifest = read_json(project / "project.json")
+    assert not manifest["title"].lower().startswith("untitled")
+    assert not manifest["topic"].upper().startswith("TODO")
+    assert manifest["title"] == manifest["topic"]
+    assert manifest["task"]["topic_locked"] is True
+    # Topic is discovered once; later cycles reuse it (no re-discovery / drift).
+    assert (project / "v1" / "topic_proposal.md").exists()
+    assert not (project / "v2" / "topic_proposal.md").exists()
+    assert (project / "v1" / "draft.md").read_text().splitlines()[0].lstrip("# ").strip() == manifest["title"]
+
+
+def test_preflight_raises_when_configured_model_unavailable(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="broken",
+        title="Broken",
+        topic="quality gates",
+        brief="Use quality gates.",
+    )
+    client = LLMClient(
+        offline=False,
+        model="offline",
+        model_routes={"score": "deepseek:deepseek-v4-flash@cc-switch:__no_such_profile__"},
+    )
+    with pytest.raises(ModelUnavailableError) as exc_info:
+        PaperPipeline(project, client=client).run()
+    assert "score" in str(exc_info.value)
+    # The run aborts before producing any version.
+    assert not (project / "v1").exists()
 
 
 def test_worse_candidate_is_kept_but_not_accepted(tmp_path: Path) -> None:
