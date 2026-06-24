@@ -74,11 +74,15 @@ CLI:
 - `--reference-search` — search Crossref for candidate references based on the paper topic/research question.
 - `--reference-search-max-results N` (default 8) — controls the Crossref reference search size.
 - `--max-prompt-chars N` (default 20000) — controls total draft prompt size.
+- `--reference-context-strategy {select,balanced,head}` (default `select`) — how loaded reference text is fitted into the prompt budget (see Prompt budget).
+- `--reference-context-chars N` (default 24000) — max chars of loaded reference context.
+- `--reference-context-full N` (default 6) — for `select`, how many top references to include at full length.
 
 Web UI:
 - **Start from version** dropdown — populated from project versions with quality scores. Overrides the baseline draft.
 - **Focus guidance** textarea — equivalent to `--focus`.
 - **Max prompt chars** input — equivalent to `--max-prompt-chars`.
+- **Reference strategy** dropdown + **Reference context chars** + **Full references** inputs — equivalent to `--reference-context-*`.
 - **Reference search** checkbox + **Max references** input — equivalent to `--reference-search`.
 - These are collected in the JS `runProject()` payload and passed to `PaperPipeline` via `_run_project()`.
 
@@ -89,6 +93,18 @@ Metadata records both `previous_version` (baseline for the draft) and `previous_
 - `--max-prompt-chars N` (default 20000) controls the total draft prompt size.
 - Reference context is trimmed first when the budget is exceeded, preserving plan and previous draft.
 - For iterative cycles the effective budget is larger to accommodate review/revision content.
+
+### Reference context strategy
+
+Loaded references are concatenated per document (`## <file>` blocks) and fitted to the budget by `budget_reference_context` (`asl/smart_loader.py`), applied both at context build and at the draft-budget trim so the choice survives both cuts:
+
+- `select` (default) — rank documents by keyword overlap with the research question/topic; give the top `full_count` a full slice and the rest a short excerpt, so every relevant document is represented.
+- `balanced` — split the budget evenly across all documents (every document gets a short excerpt).
+- `head` — legacy behaviour: concatenate and head-truncate (only the first few documents survive).
+
+Without this, a folder of N references was head-truncated to the first ~3 documents regardless of relevance, which is why earlier drafts cited only the first files and marked everything else TODO.
+
+PDF text extraction itself uses pure-JS `pdf-parse` (no Poppler needed). Poppler (`pdftoppm`) + `tesseract` are only required for the OCR fallback on scanned/image-only PDFs.
 
 ## smart-loader
 

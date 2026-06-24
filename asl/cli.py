@@ -17,7 +17,12 @@ from .pipeline import (
     init_project,
 )
 from .reference_search import ReferenceSearchSettings
-from .smart_loader import SmartLoaderSettings
+from .smart_loader import (
+    PROMPT_CONTEXT_LIMIT,
+    REFERENCE_CONTEXT_STRATEGIES,
+    ReferenceContextSettings,
+    SmartLoaderSettings,
+)
 from .web_research import WebResearchSettings
 from .workspace import read_text
 
@@ -116,6 +121,24 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"maximum chars for the draft prompt (default: {DRAFT_PROMPT_BUDGET})",
     )
     run.add_argument(
+        "--reference-context-strategy",
+        choices=REFERENCE_CONTEXT_STRATEGIES,
+        default="select",
+        help="how loaded references are fitted into the prompt: select (top-N full + rest summarized, default), balanced (even share across all), head (legacy head-truncation)",
+    )
+    run.add_argument(
+        "--reference-context-chars",
+        type=int,
+        default=PROMPT_CONTEXT_LIMIT,
+        help=f"maximum chars of loaded reference context in the prompt (default: {PROMPT_CONTEXT_LIMIT})",
+    )
+    run.add_argument(
+        "--reference-context-full",
+        type=int,
+        default=6,
+        help="for the select strategy, how many top references to include at full length (default: 6)",
+    )
+    run.add_argument(
         "--from",
         dest="from_version",
         help="start from a specific version (e.g. v2) instead of the accepted version",
@@ -172,6 +195,11 @@ def main(argv: list[str] | None = None) -> int:
             reference_paths=tuple(args.references),
             smart_loader_path=args.smart_loader,
             smart_loader_settings=_loader_settings_from_args(args),
+            reference_context_settings=ReferenceContextSettings(
+                strategy=args.reference_context_strategy,
+                limit=args.reference_context_chars,
+                full_count=args.reference_context_full,
+            ),
             model_routes=_model_routes_from_args(args),
             start_mode=args.start_mode,
             seed_draft_path=args.seed_draft_file,

@@ -444,6 +444,68 @@ def test_prompt_budget_trims_loaded_context_before_drafting(tmp_path: Path) -> N
     assert len(draft_prompt_text) < len(long_reference_context) + 3_000
 
 
+def _reference_markdown(count: int, body_word: str = "body") -> str:
+    preamble = "# Loaded References\n\nSummary:\n- Loaded files: {n}\n".format(n=count)
+    docs = [f"## {i}.pdf\n\nFormat: pdf\n\n" + (f"{body_word} " * 300).strip() for i in range(1, count + 1)]
+    return preamble + "\n\n" + "\n\n".join(docs)
+
+
+def _distinct_pdfs(text: str) -> set[int]:
+    import re
+
+    return {int(match) for match in re.findall(r"(\d+)\.pdf", text)}
+
+
+def test_reference_context_strategies_distribute_budget() -> None:
+    from asl.smart_loader import ReferenceContextSettings, budget_reference_context
+
+    combined = _reference_markdown(12)
+    limit = 6_000
+
+    head = budget_reference_context(combined, ReferenceContextSettings("head", limit))
+    balanced = budget_reference_context(combined, ReferenceContextSettings("balanced", limit))
+
+    # Head-truncation keeps only the first few documents; balanced shows them all.
+    assert len(_distinct_pdfs(head)) < 12
+    assert _distinct_pdfs(balanced) == set(range(1, 13))
+    assert len(balanced) <= limit + 200
+
+
+def test_reference_context_select_prioritizes_relevant_docs() -> None:
+    from asl.smart_loader import ReferenceContextSettings, budget_reference_context
+
+    preamble = "# Loaded References\n\nSummary:\n- Loaded files: 10\n"
+    docs = []
+    for i in range(1, 11):
+        word = "sustainability" if i == 7 else "filler"
+        docs.append(f"## {i}.pdf\n\nFormat: pdf\n\n" + (f"{word} " * 300).strip())
+    combined = preamble + "\n\n" + "\n\n".join(docs)
+
+    out = budget_reference_context(
+        combined, ReferenceContextSettings("select", 5_000, full_count=1), query="sustainability"
+    )
+    # The relevant document is included at length even though it is far down the list.
+    assert out.count("sustainability") > 50
+
+
+def test_trim_brief_honors_reference_strategy() -> None:
+    from asl.pipeline import _trim_brief_for_budget
+    from asl.smart_loader import ReferenceContextSettings
+
+    brief = "Base brief.\n\n## Loaded Data And References\n\n" + _reference_markdown(10)
+
+    balanced = _trim_brief_for_budget(
+        brief, plan="", previous_draft=None, budget=4_000,
+        ref_settings=ReferenceContextSettings("balanced", 24_000),
+    )
+    head = _trim_brief_for_budget(
+        brief, plan="", previous_draft=None, budget=4_000,
+        ref_settings=ReferenceContextSettings("head", 24_000),
+    )
+    # The strategy survives the draft-budget trim, not just the initial context build.
+    assert len(_distinct_pdfs(balanced)) > len(_distinct_pdfs(head))
+
+
 def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> None:
     version = tmp_path / "v1"
     reviews = version / "reviews"

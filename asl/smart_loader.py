@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -12,6 +13,11 @@ from typing import Any, Iterable
 
 
 PROMPT_CONTEXT_LIMIT = 24_000
+REFERENCE_CONTEXT_STRATEGIES = ("select", "balanced", "head")
+_SELECT_FULL_CHARS = 3_500
+_SELECT_SHORT_CHARS = 600
+_BALANCED_MIN_CHARS = 400
+_MIN_BLOCK_CHARS = 200
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,23 @@ class SmartLoaderSettings:
     pdf_dpi: int = 180
     ocr_assets: bool = True
     ocr_language: str = "eng"
+
+
+@dataclass(frozen=True)
+class ReferenceContextSettings:
+    """How the loaded data/reference text is fitted into the prompt budget.
+
+    strategy:
+      - "select"   (default): rank documents by relevance to the topic; give the
+                    top `full_count` a full slice and the rest a short excerpt, so
+                    every document is represented instead of only the first few.
+      - "balanced": split the budget evenly across all documents.
+      - "head":     legacy behaviour — concatenate and truncate the head.
+    """
+
+    strategy: str = "select"
+    limit: int = PROMPT_CONTEXT_LIMIT
+    full_count: int = 6
 
 
 @dataclass(frozen=True)
@@ -157,19 +180,132 @@ def load_input_groups(
     return [group for group in groups if group.has_inputs]
 
 
-def render_context_for_prompt(groups: Iterable[LoadedInputGroup], limit: int = PROMPT_CONTEXT_LIMIT) -> str:
+def render_context_for_prompt(
+    groups: Iterable[LoadedInputGroup],
+    settings: ReferenceContextSettings | None = None,
+    query: str = "",
+) -> str:
+    settings = settings or ReferenceContextSettings()
     sections = [group.markdown for group in groups if group.markdown.strip()]
     if not sections:
         return ""
-    return _clip("\n\n---\n\n".join(sections), limit)
+    combined = "\n\n---\n\n".join(sections)
+    return budget_reference_context(combined, settings, query)
 
 
-def append_context_to_brief(brief: str, groups: Iterable[LoadedInputGroup]) -> str:
-    context = render_context_for_prompt(groups)
+def append_context_to_brief(
+    brief: str,
+    groups: Iterable[LoadedInputGroup],
+    settings: ReferenceContextSettings | None = None,
+    query: str = "",
+) -> str:
+    context = render_context_for_prompt(groups, settings, query)
     if not context:
         return brief
     base = brief.strip() or "TODO"
     return f"{base}\n\n## Loaded Data And References\n\n{context}"
+
+
+def budget_reference_context(
+    combined: str,
+    settings: ReferenceContextSettings | None = None,
+    query: str = "",
+    limit: int | None = None,
+) -> str:
+    """Fit concatenated document markdown into `limit` chars using the strategy.
+
+    Documents are split on their `## ` headers; the preamble (group header and
+    load summary) is preserved. "head" falls back to plain head-truncation.
+    """
+    settings = settings or ReferenceContextSettings()
+    limit = settings.limit if limit is None else limit
+    combined = combined.strip()
+    if limit <= 0 or len(combined) <= limit:
+        return combined
+    if settings.strategy == "head":
+        return _clip(combined, limit)
+
+    preamble, blocks = _split_doc_blocks(combined)
+    if not blocks:
+        return _clip(combined, limit)
+
+    preamble = preamble.strip()
+    body_budget = max(_MIN_BLOCK_CHARS, limit - len(preamble) - 2)
+    if settings.strategy == "balanced":
+        kept = _budget_balanced(blocks, body_budget)
+    else:
+        kept = _budget_select(blocks, body_budget, query, settings.full_count)
+    body = "\n\n".join(block for block in kept if block.strip())
+    rendered = f"{preamble}\n\n{body}".strip() if preamble else body
+    return _clip(rendered, limit)
+
+
+def _split_doc_blocks(text: str) -> tuple[str, list[str]]:
+    parts = re.split(r"(?m)(?=^## )", text)
+    if len(parts) <= 1:
+        return text, []
+    preamble = parts[0]
+    blocks = [part.strip() for part in parts[1:] if part.strip()]
+    return preamble, blocks
+
+
+def _budget_balanced(blocks: list[str], budget: int) -> list[str]:
+    per_doc = max(_BALANCED_MIN_CHARS, budget // max(1, len(blocks)))
+    kept: list[str] = []
+    used = 0
+    for block in blocks:
+        if used >= budget:
+            kept.append(_doc_title_line(block) + "\n[omitted to fit prompt budget]")
+            continue
+        allow = min(per_doc, budget - used)
+        clipped = _clip_block(block, allow)
+        kept.append(clipped)
+        used += len(clipped)
+    return kept
+
+
+def _budget_select(blocks: list[str], budget: int, query: str, full_count: int) -> list[str]:
+    order = sorted(range(len(blocks)), key=lambda i: (-_relevance(blocks[i], query), i))
+    caps = {
+        index: (_SELECT_FULL_CHARS if rank < max(1, full_count) else _SELECT_SHORT_CHARS)
+        for rank, index in enumerate(order)
+    }
+    rendered: dict[int, str] = {}
+    used = 0
+    for index in order:
+        block = blocks[index]
+        if used >= budget:
+            rendered[index] = _doc_title_line(block) + "\n[omitted to fit prompt budget]"
+            used += len(rendered[index])
+            continue
+        allow = min(caps[index], max(_MIN_BLOCK_CHARS, budget - used))
+        clipped = _clip_block(block, allow)
+        rendered[index] = clipped
+        used += len(clipped)
+    return [rendered[index] for index in range(len(blocks))]
+
+
+def _relevance(block: str, query: str) -> int:
+    tokens = set(re.findall(r"[a-z0-9]{4,}", query.lower()))
+    if not tokens:
+        return 0
+    lowered = block.lower()
+    title = _doc_title_line(block).lower()
+    return sum(lowered.count(token) + 2 * title.count(token) for token in tokens)
+
+
+def _clip_block(block: str, allow: int) -> str:
+    header, _, body = block.partition("\n")
+    if len(block) <= allow:
+        return block
+    body_budget = max(0, allow - len(header) - 1)
+    if not body or body_budget <= 0:
+        return header.rstrip()
+    return f"{header}\n{body[:body_budget].rstrip()}\n[…]"
+
+
+def _doc_title_line(block: str) -> str:
+    return block.split("\n", 1)[0].strip()
 
 
 def resolve_input_paths(paths: Iterable[Path | str], base_dir: Path) -> list[Path]:

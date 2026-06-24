@@ -19,9 +19,11 @@ from .reference_search import (
 )
 from .smart_loader import (
     LoadedInputGroup,
+    ReferenceContextSettings,
     SmartLoader,
     SmartLoaderSettings,
     append_context_to_brief,
+    budget_reference_context,
     resolve_input_paths,
 )
 from .templates import (
@@ -165,6 +167,7 @@ class PaperPipeline:
         reference_paths: tuple[Path, ...] = (),
         smart_loader_path: Path | None = None,
         smart_loader_settings: SmartLoaderSettings | None = None,
+        reference_context_settings: ReferenceContextSettings | None = None,
         model_routes: dict[str, str] | None = None,
         start_mode: str | None = None,
         seed_draft_path: Path | None = None,
@@ -211,6 +214,7 @@ class PaperPipeline:
         )
         self.smart_loader_path = smart_loader_path
         self.smart_loader_settings = smart_loader_settings or SmartLoaderSettings()
+        self.reference_context_settings = reference_context_settings or ReferenceContextSettings()
         self.resolved_smart_loader_path: Path | None = None
         self.web_research_settings = web_research_settings or WebResearchSettings()
         self.reference_search_settings = reference_search_settings or ReferenceSearchSettings()
@@ -302,7 +306,10 @@ class PaperPipeline:
         )
         loaded_inputs = self._load_inputs(version_dir)
         self._write_smart_loader_manifest(version_dir, loaded_seed_draft, loaded_inputs)
-        brief = append_context_to_brief(self.brief, loaded_inputs)
+        reference_query = _reference_query(self.manifest)
+        brief = append_context_to_brief(
+            self.brief, loaded_inputs, self.reference_context_settings, query=reference_query
+        )
         if self.additional_context:
             brief = f"{brief}\n\n## Additional Guidance\n\n{self.additional_context.strip()}"
         working_manifest = dict(self.manifest)
@@ -384,6 +391,8 @@ class PaperPipeline:
             draft_brief = _trim_brief_for_budget(
                 brief, plan.text, previous_draft, iterative_budget,
                 previous_draft_budget=16000, extra_costs=review_cost,
+                ref_settings=self.reference_context_settings,
+                ref_query=_reference_query(working_manifest),
             )
             draft = _generate(
                 self.client,
@@ -395,7 +404,11 @@ class PaperPipeline:
                 role="draft",
             )
         else:
-            draft_brief = _trim_brief_for_budget(brief, plan.text, previous_draft, self.prompt_budget)
+            draft_brief = _trim_brief_for_budget(
+                brief, plan.text, previous_draft, self.prompt_budget,
+                ref_settings=self.reference_context_settings,
+                ref_query=_reference_query(working_manifest),
+            )
             draft = _generate(
                 self.client,
                 draft_prompt(working_manifest, plan.text, draft_brief, previous_draft),
@@ -948,9 +961,21 @@ def _title_is_placeholder(title: str | None) -> bool:
     return title.strip().lower().startswith("untitled")
 
 
+def _reference_query(manifest: dict) -> str:
+    research_question = manifest.get("research_question")
+    if isinstance(research_question, str) and research_question.strip() and not _topic_is_placeholder(research_question):
+        return research_question
+    topic = manifest.get("topic")
+    if isinstance(topic, str) and not _topic_is_placeholder(topic):
+        return topic
+    return ""
+
+
 def _trim_brief_for_budget(
     brief: str, plan: str, previous_draft: str | None, budget: int,
     previous_draft_budget: int = 8000, extra_costs: int = 0,
+    ref_settings: ReferenceContextSettings | None = None,
+    ref_query: str = "",
 ) -> str:
     overhead = 800
     plan_size = len(plan.strip()) if plan else 0
@@ -967,8 +992,8 @@ def _trim_brief_for_budget(
         ref_budget = max(400, available - len(base_brief))
         if len(ref_section) <= ref_budget:
             return brief
-        clipped = ref_section[:ref_budget].rstrip()
-        return f"{base_brief}{marker}{clipped}\n\n[TRUNCATED: {len(ref_section) - ref_budget} characters omitted to fit model context]"
+        clipped = budget_reference_context(ref_section, ref_settings, ref_query, limit=ref_budget)
+        return f"{base_brief}{marker}{clipped}"
     return brief[:available].rstrip()
 
 

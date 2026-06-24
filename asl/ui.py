@@ -21,7 +21,13 @@ from .catalog import catalog_payload
 from .llm import LLMClient
 from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, PaperPipeline, init_project, init_project_at
 from .reference_search import ReferenceSearchSettings
-from .smart_loader import SmartLoader, SmartLoaderSettings
+from .smart_loader import (
+    PROMPT_CONTEXT_LIMIT,
+    REFERENCE_CONTEXT_STRATEGIES,
+    ReferenceContextSettings,
+    SmartLoader,
+    SmartLoaderSettings,
+)
 from .web_research import WebResearchSettings
 from .workspace import read_json, read_text
 
@@ -310,6 +316,7 @@ def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]
         from_version=payload.get("fromVersion") or None,
         additional_context=payload.get("additionalContext") or None,
         prompt_budget=_int_setting(payload.get("maxPromptChars"), DRAFT_PROMPT_BUDGET),
+        reference_context_settings=_reference_context_settings(payload.get("referenceContext", {})),
         progress_callback=progress,
     )
     created = pipeline.run(cycles=max(1, int(payload.get("cycles") or 1)), reviewers=reviewers)
@@ -680,6 +687,19 @@ def _reference_search_settings(payload: object) -> ReferenceSearchSettings:
     )
 
 
+def _reference_context_settings(payload: object) -> ReferenceContextSettings:
+    if not isinstance(payload, dict):
+        payload = {}
+    strategy = str(payload.get("strategy") or "select").strip().lower()
+    if strategy not in REFERENCE_CONTEXT_STRATEGIES:
+        strategy = "select"
+    return ReferenceContextSettings(
+        strategy=strategy,
+        limit=_int_setting(payload.get("chars"), PROMPT_CONTEXT_LIMIT),
+        full_count=_int_setting(payload.get("fullCount"), 6),
+    )
+
+
 def _bool_setting(value: object, default: bool) -> bool:
     if value is None:
         return default
@@ -785,6 +805,22 @@ _INDEX_HTML = """<!doctype html>
           </label>
           <label>Max prompt chars
             <input id="maxPromptChars" type="number" min="5000" value="20000">
+          </label>
+        </div>
+        <div class="inline-fields">
+          <label>Reference strategy
+            <select id="referenceContextStrategy">
+              <option value="select">select — top-N full + rest summarized</option>
+              <option value="balanced">balanced — even share across all</option>
+              <option value="head">head — legacy head-truncation</option>
+            </select>
+            <span class="field-note">How loaded references are fitted into the prompt.</span>
+          </label>
+          <label>Reference context chars
+            <input id="referenceContextChars" type="number" min="2000" value="24000">
+          </label>
+          <label>Full references (select)
+            <input id="referenceContextFull" type="number" min="1" value="6">
           </label>
         </div>
         <label>Focus guidance
@@ -2241,6 +2277,11 @@ async function runProject(event) {
     fromVersion: $("fromVersion").value,
     additionalContext: $("focusGuidance").value,
     maxPromptChars: $("maxPromptChars").value,
+    referenceContext: {
+      strategy: $("referenceContextStrategy").value,
+      chars: $("referenceContextChars").value,
+      fullCount: $("referenceContextFull").value,
+    },
     offline: $("offline").checked,
     allowAgentTools: $("allowAgentTools").checked,
     allowLocalAgents: $("allowLocalAgents").checked,
