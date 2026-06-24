@@ -312,6 +312,7 @@ class PaperPipeline:
         )
         if self.additional_context:
             brief = f"{brief}\n\n## Additional Guidance\n\n{self.additional_context.strip()}"
+        brief = _sanitize_local_paths(brief, self.reference_paths + self.data_paths)
         working_manifest = dict(self.manifest)
         self._emit_progress(
             "topic_discovery",
@@ -373,7 +374,8 @@ class PaperPipeline:
             offline_plan(working_manifest, brief, previous_draft),
             role="plan",
         )
-        write_text(version_dir / "research_plan.md", plan.text)
+        plan_text = _sanitize_local_paths(plan.text, self.reference_paths + self.data_paths)
+        write_text(version_dir / "research_plan.md", plan_text)
 
         self._emit_progress(
             "draft",
@@ -389,7 +391,7 @@ class PaperPipeline:
             review_cost = min(len(review_summary), 4000) + min(len(revision_plan_text), 3000)
             iterative_budget = self.prompt_budget + review_cost + 8000
             draft_brief = _trim_brief_for_budget(
-                brief, plan.text, previous_draft, iterative_budget,
+                brief, plan_text, previous_draft, iterative_budget,
                 previous_draft_budget=16000, extra_costs=review_cost,
                 ref_settings=self.reference_context_settings,
                 ref_query=_reference_query(working_manifest),
@@ -397,22 +399,22 @@ class PaperPipeline:
             draft = _generate(
                 self.client,
                 iterative_draft_prompt(
-                    working_manifest, plan.text, draft_brief, previous_draft,
+                    working_manifest, plan_text, draft_brief, previous_draft,
                     review_summary, revision_plan_text,
                 ),
-                offline_draft(working_manifest, plan.text, brief, previous_draft),
+                offline_draft(working_manifest, plan_text, brief, previous_draft),
                 role="draft",
             )
         else:
             draft_brief = _trim_brief_for_budget(
-                brief, plan.text, previous_draft, self.prompt_budget,
+                brief, plan_text, previous_draft, self.prompt_budget,
                 ref_settings=self.reference_context_settings,
                 ref_query=_reference_query(working_manifest),
             )
             draft = _generate(
                 self.client,
-                draft_prompt(working_manifest, plan.text, draft_brief, previous_draft),
-                offline_draft(working_manifest, plan.text, brief, previous_draft),
+                draft_prompt(working_manifest, plan_text, draft_brief, previous_draft),
+                offline_draft(working_manifest, plan_text, brief, previous_draft),
                 role="draft",
             )
         write_text(version_dir / "draft.md", draft.text)
@@ -959,6 +961,24 @@ def _title_is_placeholder(title: str | None) -> bool:
     if not title or not title.strip():
         return True
     return title.strip().lower().startswith("untitled")
+
+
+def _sanitize_local_paths(text: str, dirs: tuple[Path, ...]) -> str:
+    """Replace absolute paths under known input dirs with bare basenames.
+
+    Live local file paths make agentic CLI providers (claude-code/codex) switch
+    into file-tool mode and narrate tool calls instead of emitting the draft, so
+    references must reach the prompt as bare names like ``17.pdf``.
+    """
+    if not text or not dirs:
+        return text
+    for directory in dirs:
+        base = str(directory)
+        if not base:
+            continue
+        text = re.sub(re.escape(base) + r"/(?:[^\s)\]]*/)?([^\s/)\]]+)", r"\1", text)
+        text = text.replace(base, "the supplied corpus")
+    return text
 
 
 def _reference_query(manifest: dict) -> str:

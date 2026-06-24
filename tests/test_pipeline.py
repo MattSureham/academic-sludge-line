@@ -510,6 +510,23 @@ def test_trim_brief_honors_reference_strategy() -> None:
     assert len(_distinct_pdfs(balanced)) > len(_distinct_pdfs(select))
 
 
+def test_sanitize_local_paths_strips_absolute_paths() -> None:
+    from asl.pipeline import _sanitize_local_paths
+
+    dirs = (Path("/Users/me/Projects/testruns/6/references"),)
+    plan = (
+        "CFIR [17.pdf](/Users/me/Projects/testruns/6/references/17.pdf) and "
+        "[9.pdf](/Users/me/Projects/testruns/6/references/sub/9.pdf)\n"
+        "Input paths:\n- /Users/me/Projects/testruns/6/references"
+    )
+    out = _sanitize_local_paths(plan, dirs)
+    # Absolute paths become bare basenames so agentic CLIs don't try to open files.
+    assert "/Users/me/Projects" not in out
+    assert "(17.pdf)" in out
+    assert "9.pdf" in out
+    assert "`1.pdf`" == _sanitize_local_paths("`1.pdf`", dirs)
+
+
 def test_full_strategy_bypasses_draft_budget_trim() -> None:
     from asl.pipeline import _trim_brief_for_budget
     from asl.smart_loader import ReferenceContextSettings
