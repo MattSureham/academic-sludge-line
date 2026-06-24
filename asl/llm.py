@@ -18,7 +18,7 @@ from typing import Callable, Iterable, Mapping
 
 from .catalog import PROVIDERS
 from .local_providers import cc_switch_settings_for_ref
-from .templates import SYSTEM_POLICY
+from .templates import NO_TOOLS_POLICY, SYSTEM_POLICY
 
 
 ROLE_DEFAULT = "default"
@@ -519,6 +519,8 @@ def _agent_prompt(prompt: str, allow_tools: bool = False) -> str:
     policies = SYSTEM_POLICY
     if allow_tools:
         policies = f"{policies}\n\n{AGENT_TOOL_POLICY}"
+    else:
+        policies = f"{policies}\n\n{NO_TOOLS_POLICY}"
     return f"{policies}\n\n{prompt}"
 
 

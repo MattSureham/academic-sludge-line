@@ -510,6 +510,17 @@ def test_trim_brief_honors_reference_strategy() -> None:
     assert len(_distinct_pdfs(balanced)) > len(_distinct_pdfs(select))
 
 
+def test_agent_prompt_disables_tools_when_not_allowed() -> None:
+    from asl.llm import _agent_prompt
+
+    no_tools = _agent_prompt("DELIVERABLE", allow_tools=False)
+    with_tools = _agent_prompt("DELIVERABLE", allow_tools=True)
+    # Without tools, the local agentic CLI is told to emit the deliverable inline
+    # instead of narrating file/shell tool calls.
+    assert "NO tools" in no_tools
+    assert "NO tools" not in with_tools
+
+
 def test_sanitize_local_paths_strips_absolute_paths() -> None:
     from asl.pipeline import _sanitize_local_paths
 

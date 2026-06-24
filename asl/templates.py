@@ -19,6 +19,17 @@ SYSTEM_POLICY = dedent(
 ).strip()
 
 
+NO_TOOLS_POLICY = dedent(
+    """
+    You are running in non-interactive text-generation mode and have NO tools.
+    Do NOT read files, write or create files, or run shell commands, and do NOT
+    describe tool calls. Output the COMPLETE requested deliverable directly and in
+    full as your text response (for example, the entire Markdown document inline).
+    Your whole response is captured verbatim as the deliverable.
+    """
+).strip()
+
+
 def plan_prompt(manifest: dict, brief: str, previous: str | None = None) -> str:
     prompt = dedent(
         f"""
