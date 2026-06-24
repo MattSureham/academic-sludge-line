@@ -74,8 +74,8 @@ CLI:
 - `--reference-search` — search Crossref for candidate references based on the paper topic/research question.
 - `--reference-search-max-results N` (default 8) — controls the Crossref reference search size.
 - `--max-prompt-chars N` (default 20000) — controls total draft prompt size.
-- `--reference-context-strategy {select,balanced,head}` (default `select`) — how loaded reference text is fitted into the prompt budget (see Prompt budget).
-- `--reference-context-chars N` (default 24000) — max chars of loaded reference context.
+- `--reference-context-strategy {select,balanced,full}` (default `select`) — how loaded reference text is fitted into the prompt budget (see Prompt budget).
+- `--reference-context-chars N` (default 24000) — max chars of loaded reference context; raise it for the `full` strategy.
 - `--reference-context-full N` (default 6) — for `select`, how many top references to include at full length.
 
 Web UI:
@@ -100,7 +100,7 @@ Loaded references are concatenated per document (`## <file>` blocks) and fitted 
 
 - `select` (default) — rank documents by keyword overlap with the research question/topic; give the top `full_count` a full slice and the rest a short excerpt, so every relevant document is represented.
 - `balanced` — split the budget evenly across all documents (every document gets a short excerpt).
-- `head` — legacy behaviour: concatenate and head-truncate (only the first few documents survive).
+- `full` — include every document at full length up to `--reference-context-chars`; the draft-budget trim does **not** shrink it, so raising that limit is the lever (at the cost of a larger, more expensive prompt).
 
 Without this, a folder of N references was head-truncated to the first ~3 documents regardless of relevance, which is why earlier drafts cited only the first files and marked everything else TODO.
 

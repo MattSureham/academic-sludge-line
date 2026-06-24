@@ -124,13 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--reference-context-strategy",
         choices=REFERENCE_CONTEXT_STRATEGIES,
         default="select",
-        help="how loaded references are fitted into the prompt: select (top-N full + rest summarized, default), balanced (even share across all), head (legacy head-truncation)",
+        help="how loaded references are fitted into the prompt: select (top-N full + rest summarized, default), balanced (even share across all), full (all references at full length, bounded by --reference-context-chars and not shrunk by --max-prompt-chars)",
     )
     run.add_argument(
         "--reference-context-chars",
         type=int,
         default=PROMPT_CONTEXT_LIMIT,
-        help=f"maximum chars of loaded reference context in the prompt (default: {PROMPT_CONTEXT_LIMIT})",
+        help=f"maximum chars of loaded reference context in the prompt; raise this for the full strategy (default: {PROMPT_CONTEXT_LIMIT})",
     )
     run.add_argument(
         "--reference-context-full",

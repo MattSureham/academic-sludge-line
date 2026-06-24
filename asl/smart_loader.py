@@ -13,7 +13,7 @@ from typing import Any, Iterable
 
 
 PROMPT_CONTEXT_LIMIT = 24_000
-REFERENCE_CONTEXT_STRATEGIES = ("select", "balanced", "head")
+REFERENCE_CONTEXT_STRATEGIES = ("select", "balanced", "full")
 _SELECT_FULL_CHARS = 3_500
 _SELECT_SHORT_CHARS = 600
 _BALANCED_MIN_CHARS = 400
@@ -38,7 +38,9 @@ class ReferenceContextSettings:
                     top `full_count` a full slice and the rest a short excerpt, so
                     every document is represented instead of only the first few.
       - "balanced": split the budget evenly across all documents.
-      - "head":     legacy behaviour — concatenate and truncate the head.
+      - "full":     include every document at full length up to `limit`; the draft
+                    budget does not shrink it, so raising `limit` is how you fit
+                    more references (at the cost of a larger prompt).
     """
 
     strategy: str = "select"
@@ -215,14 +217,15 @@ def budget_reference_context(
     """Fit concatenated document markdown into `limit` chars using the strategy.
 
     Documents are split on their `## ` headers; the preamble (group header and
-    load summary) is preserved. "head" falls back to plain head-truncation.
+    load summary) is preserved. "full" keeps everything up to `limit`.
     """
     settings = settings or ReferenceContextSettings()
     limit = settings.limit if limit is None else limit
     combined = combined.strip()
     if limit <= 0 or len(combined) <= limit:
         return combined
-    if settings.strategy == "head":
+    if settings.strategy == "full":
+        # Everything at full length; only head-truncate if it exceeds the (raised) limit.
         return _clip(combined, limit)
 
     preamble, blocks = _split_doc_blocks(combined)

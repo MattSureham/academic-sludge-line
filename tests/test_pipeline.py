@@ -462,13 +462,17 @@ def test_reference_context_strategies_distribute_budget() -> None:
     combined = _reference_markdown(12)
     limit = 6_000
 
-    head = budget_reference_context(combined, ReferenceContextSettings("head", limit))
+    full = budget_reference_context(combined, ReferenceContextSettings("full", limit))
     balanced = budget_reference_context(combined, ReferenceContextSettings("balanced", limit))
 
-    # Head-truncation keeps only the first few documents; balanced shows them all.
-    assert len(_distinct_pdfs(head)) < 12
+    # At a tight limit, "full" head-truncates (few docs); balanced shows them all.
+    assert len(_distinct_pdfs(full)) < 12
     assert _distinct_pdfs(balanced) == set(range(1, 13))
     assert len(balanced) <= limit + 200
+
+    # Raising the limit lets "full" include every document at full length.
+    raised = budget_reference_context(combined, ReferenceContextSettings("full", len(combined) + 100))
+    assert _distinct_pdfs(raised) == set(range(1, 13))
 
 
 def test_reference_context_select_prioritizes_relevant_docs() -> None:
@@ -498,12 +502,29 @@ def test_trim_brief_honors_reference_strategy() -> None:
         brief, plan="", previous_draft=None, budget=4_000,
         ref_settings=ReferenceContextSettings("balanced", 24_000),
     )
-    head = _trim_brief_for_budget(
+    select = _trim_brief_for_budget(
         brief, plan="", previous_draft=None, budget=4_000,
-        ref_settings=ReferenceContextSettings("head", 24_000),
+        ref_settings=ReferenceContextSettings("select", 24_000, full_count=1),
     )
     # The strategy survives the draft-budget trim, not just the initial context build.
-    assert len(_distinct_pdfs(balanced)) > len(_distinct_pdfs(head))
+    assert len(_distinct_pdfs(balanced)) > len(_distinct_pdfs(select))
+
+
+def test_full_strategy_bypasses_draft_budget_trim() -> None:
+    from asl.pipeline import _trim_brief_for_budget
+    from asl.smart_loader import ReferenceContextSettings
+
+    references = _reference_markdown(10)
+    brief = "Base brief.\n\n## Loaded Data And References\n\n" + references
+
+    # "full" keeps every reference even though the draft budget is far smaller,
+    # so raising --reference-context-chars is the only lever that bounds it.
+    out = _trim_brief_for_budget(
+        brief, plan="", previous_draft=None, budget=4_000,
+        ref_settings=ReferenceContextSettings("full", 100_000),
+    )
+    assert out == brief
+    assert _distinct_pdfs(out) == set(range(1, 11))
 
 
 def test_html_renderer_includes_dynamic_reviews_and_assets(tmp_path: Path) -> None:

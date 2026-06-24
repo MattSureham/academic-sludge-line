@@ -983,6 +983,11 @@ def _trim_brief_for_budget(
     available = budget - overhead - plan_size - previous_size - extra_costs
     if available >= len(brief):
         return brief
+    # The "full" strategy treats loaded references as non-negotiable: the prompt
+    # grows to fit them (bounded only by the reference-context limit), so raising
+    # that limit is the lever instead of clever per-document budgeting.
+    if ref_settings is not None and ref_settings.strategy == "full":
+        return brief
     available = max(800, available)
     marker = "\n## Loaded Data And References\n"
     parts = brief.split(marker, 1)

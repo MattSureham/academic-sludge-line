@@ -812,12 +812,13 @@ _INDEX_HTML = """<!doctype html>
             <select id="referenceContextStrategy">
               <option value="select">select — top-N full + rest summarized</option>
               <option value="balanced">balanced — even share across all</option>
-              <option value="head">head — legacy head-truncation</option>
+              <option value="full">full — all references, raise the chars limit</option>
             </select>
             <span class="field-note">How loaded references are fitted into the prompt.</span>
           </label>
           <label>Reference context chars
             <input id="referenceContextChars" type="number" min="2000" value="24000">
+            <span class="field-note">For full: raise this to fit more (grows the prompt).</span>
           </label>
           <label>Full references (select)
             <input id="referenceContextFull" type="number" min="1" value="6">
