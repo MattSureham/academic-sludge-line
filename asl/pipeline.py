@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
+from .doc_render import render_draft_doc
 from .html_render import render_version_html
 from .llm import LLMClient
 from .reference_search import (
@@ -542,6 +543,7 @@ class PaperPipeline:
                 *(["web_research.md", "web_research.json"] if web_research.enabled else []),
                 "research_plan.md",
                 "draft.md",
+                "draft.rtf",
                 "reviews/",
                 "revision_plan.md",
                 "html/",
@@ -549,6 +551,7 @@ class PaperPipeline:
         }
         write_json(version_dir / "metadata.json", metadata)
         render_version_html(version_dir)
+        render_draft_doc(version_dir)
         self._emit_progress(
             "cycle_complete",
             f"Finished {version_dir.name}",
@@ -573,6 +576,7 @@ class PaperPipeline:
         seed_text, loaded_seed_draft = self._load_seed_draft(version_dir)
         self._write_smart_loader_manifest(version_dir, loaded_seed_draft, [])
         write_text(version_dir / "draft.md", seed_text)
+        render_draft_doc(version_dir)
         write_text(
             version_dir / "prompt.md",
             _seed_baseline_prompt_record(self.manifest, self.seed_draft_path, loaded_seed_draft),
@@ -620,6 +624,7 @@ class PaperPipeline:
                 "prompt.md",
                 "inputs/",
                 "draft.md",
+                "draft.rtf",
                 "metadata.json",
                 "html/",
             ],

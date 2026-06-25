@@ -25,6 +25,7 @@ Current repo: `/Users/matthew/Projects/academic-sludge-line`
 | `asl/reference_search.py` | Auditable Crossref literature search from title/topic/research question |
 | `asl/web_research.py` | Auditable web search stage: generates queries, fetches results, writes to version dir |
 | `asl/html_render.py` | Markdown → HTML rendering for version HTML preview |
+| `asl/doc_render.py` | Markdown → RTF (`draft.rtf`) so each draft opens and edits in Word; zero-dependency |
 
 ## Model routing
 

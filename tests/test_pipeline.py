@@ -1437,6 +1437,32 @@ def test_reference_focus_rotates_and_keeps_anchors(tmp_path: Path) -> None:
     assert set(focus2) - set(focus1)
 
 
+def test_render_draft_doc_writes_word_openable_rtf(tmp_path: Path) -> None:
+    from asl.doc_render import markdown_to_rtf, render_draft_doc
+
+    markdown = (
+        "# Title\n\nA paragraph with **bold** and *italic* and an em—dash.\n\n"
+        "## Section\n\n- a bullet\n\n| A | B |\n|---|---|\n| 1 | 2 |\n"
+    )
+    version = tmp_path / "v1"
+    version.mkdir()
+    (version / "draft.md").write_text(markdown, encoding="utf-8")
+    out = render_draft_doc(version)
+    assert out is not None and out.name == "draft.rtf"
+
+    rtf = out.read_text(encoding="ascii")
+    assert rtf.startswith(r"{\rtf1")
+    assert rtf.rstrip().endswith("}")
+    assert r"{\b " in rtf  # bold run
+    assert r"\trowd" in rtf  # the table became an RTF table
+    assert "\\u8212?" in rtf  # the em-dash (U+2014) is unicode-escaped, not raw bytes
+    assert "—" not in rtf  # body is pure ASCII
+    # Braces are balanced so Word can parse the document.
+    assert rtf.count("{") == rtf.count("}")
+    # No draft -> no file.
+    assert render_draft_doc(tmp_path / "empty") is None
+
+
 def test_draft_prompt_names_focus_and_forbids_unavailable_excuse() -> None:
     from asl.templates import draft_prompt, iterative_draft_prompt
 
