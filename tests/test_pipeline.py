@@ -1414,6 +1414,45 @@ def test_discover_topic_manual_waits_for_choice(tmp_path: Path) -> None:
     assert read_json(project / "project.json")["task"]["topic_locked"] is True
 
 
+def test_reference_focus_rotates_and_keeps_anchors(tmp_path: Path) -> None:
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    for i in range(1, 13):
+        (refs / f"{i}.md").write_text(f"# Reference {i}\n\n" + ("body " * 60), encoding="utf-8")
+    project = init_project(
+        root=tmp_path, slug="rotate", title="Untitled Paper", topic=None,
+        start_mode="discover-topic", brief="Synthesize.",
+    )
+    PaperPipeline(
+        project, client=LLMClient(offline=True), reference_paths=(refs,),
+        topic_mode="auto", topic_count=3,
+    ).run(cycles=2)
+
+    anchors = read_json(project / "project.json")["topic_anchors"]
+    focus1 = read_json(project / "v1" / "metadata.json")["reference_focus"]
+    focus2 = read_json(project / "v2" / "metadata.json")["reference_focus"]
+    # Anchors are featured every cycle; rotation brings in papers v1 did not feature.
+    assert set(anchors).issubset(set(focus1))
+    assert set(anchors).issubset(set(focus2))
+    assert set(focus2) - set(focus1)
+
+
+def test_underused_references_parsed_from_reviews(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path, slug="underused", title="U", topic="t", brief="b",
+    )
+    pipeline = PaperPipeline(project, client=LLMClient(offline=True))
+    baseline = project / "v1"
+    (baseline / "reviews").mkdir(parents=True)
+    (baseline / "reviews" / "evidence.md").write_text(
+        "Major issues\nUnderused references: 4.pdf, 19.pdf\n", encoding="utf-8"
+    )
+    (baseline / "reviews" / "methods.md").write_text(
+        "Underused references: none\n", encoding="utf-8"
+    )
+    assert pipeline._underused_from_reviews(baseline) == ["4.pdf", "19.pdf"]
+
+
 def test_preflight_raises_when_configured_model_unavailable(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path,

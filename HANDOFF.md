@@ -65,6 +65,15 @@ Starting from the second cycle, the pipeline detects that a previous version has
 - Reference context is compressed (the model already has it in the previous draft).
 - Iterative cycles get a larger total prompt budget (`prompt_budget + review_cost + 8K`).
 
+### Reference focus rotation (`select` strategy)
+
+Each cycle computes a `reference_focus` set — the papers featured at full length this round — via `PaperPipeline._focus_set`:
+- The discovered topic's `topic_anchors` are featured every cycle.
+- Reviewers emit an `Underused references:` line; those filenames (parsed from the baseline reviews) are featured next cycle (review-driven).
+- The remaining slots rotate over papers not yet featured in any earlier version (coverage-driven), so iterations deepen different sources instead of re-citing the first few.
+
+`reference_focus` is recorded in each version's `metadata.json` and read back as the rotation history. The focus set is passed as `featured` into `budget_reference_context`, which gives those filenames full-length slices under the `select` strategy. The quality gate still decides whether the refocused draft is kept.
+
 ## Human-directed intervention
 
 CLI:

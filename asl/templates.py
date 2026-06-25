@@ -141,6 +141,7 @@ def review_prompt(manifest: dict, draft: str, reviewer: str) -> str:
         2. Minor issues
         3. Required revisions
         4. Accept/revise/reject recommendation
+        5. Underused references: <comma-separated source filenames (e.g. 4.pdf, 19.pdf) that are named or relevant but not substantively engaged, and that the next revision should draw on; write "none" if all are well used>
 
         Draft:
         """

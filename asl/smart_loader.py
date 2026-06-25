@@ -186,13 +186,14 @@ def render_context_for_prompt(
     groups: Iterable[LoadedInputGroup],
     settings: ReferenceContextSettings | None = None,
     query: str = "",
+    featured: Iterable[str] = (),
 ) -> str:
     settings = settings or ReferenceContextSettings()
     sections = [group.markdown for group in groups if group.markdown.strip()]
     if not sections:
         return ""
     combined = "\n\n---\n\n".join(sections)
-    return budget_reference_context(combined, settings, query)
+    return budget_reference_context(combined, settings, query, featured=featured)
 
 
 def append_context_to_brief(
@@ -200,8 +201,9 @@ def append_context_to_brief(
     groups: Iterable[LoadedInputGroup],
     settings: ReferenceContextSettings | None = None,
     query: str = "",
+    featured: Iterable[str] = (),
 ) -> str:
-    context = render_context_for_prompt(groups, settings, query)
+    context = render_context_for_prompt(groups, settings, query, featured)
     if not context:
         return brief
     base = brief.strip() or "TODO"
@@ -213,11 +215,13 @@ def budget_reference_context(
     settings: ReferenceContextSettings | None = None,
     query: str = "",
     limit: int | None = None,
+    featured: Iterable[str] = (),
 ) -> str:
     """Fit concatenated document markdown into `limit` chars using the strategy.
 
     Documents are split on their `## ` headers; the preamble (group header and
-    load summary) is preserved. "full" keeps everything up to `limit`.
+    load summary) is preserved. "full" keeps everything up to `limit`. `featured`
+    is a set of source filenames to give full slices this round (focus rotation).
     """
     settings = settings or ReferenceContextSettings()
     limit = settings.limit if limit is None else limit
@@ -237,7 +241,7 @@ def budget_reference_context(
     if settings.strategy == "balanced":
         kept = _budget_balanced(blocks, body_budget)
     else:
-        kept = _budget_select(blocks, body_budget, query, settings.full_count)
+        kept = _budget_select(blocks, body_budget, query, settings.full_count, featured)
     body = "\n\n".join(block for block in kept if block.strip())
     rendered = f"{preamble}\n\n{body}".strip() if preamble else body
     return _clip(rendered, limit)
@@ -267,10 +271,25 @@ def _budget_balanced(blocks: list[str], budget: int) -> list[str]:
     return kept
 
 
-def _budget_select(blocks: list[str], budget: int, query: str, full_count: int) -> list[str]:
-    order = sorted(range(len(blocks)), key=lambda i: (-_relevance(blocks[i], query), i))
+def _budget_select(
+    blocks: list[str], budget: int, query: str, full_count: int, featured: Iterable[str] = ()
+) -> list[str]:
+    featured_names = [name.lower() for name in featured or () if name]
+
+    def is_featured(index: int) -> bool:
+        title = _doc_title_line(blocks[index]).lower()
+        return any(name in title for name in featured_names)
+
+    featured_idx = [i for i in range(len(blocks)) if is_featured(i)]
+    rest_idx = sorted(
+        (i for i in range(len(blocks)) if i not in set(featured_idx)),
+        key=lambda i: (-_relevance(blocks[i], query), i),
+    )
+    # Featured papers are forced to the front and counted as full-length slots.
+    order = featured_idx + rest_idx
+    full_slots = max(len(featured_idx), max(1, full_count))
     caps = {
-        index: (_SELECT_FULL_CHARS if rank < max(1, full_count) else _SELECT_SHORT_CHARS)
+        index: (_SELECT_FULL_CHARS if rank < full_slots else _SELECT_SHORT_CHARS)
         for rank, index in enumerate(order)
     }
     rendered: dict[int, str] = {}

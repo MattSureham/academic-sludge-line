@@ -331,13 +331,6 @@ class PaperPipeline:
         )
         loaded_inputs = self._load_inputs(version_dir)
         self._write_smart_loader_manifest(version_dir, loaded_seed_draft, loaded_inputs)
-        reference_query = _reference_query(self.manifest)
-        brief = append_context_to_brief(
-            self.brief, loaded_inputs, self.reference_context_settings, query=reference_query
-        )
-        if self.additional_context:
-            brief = f"{brief}\n\n## Additional Guidance\n\n{self.additional_context.strip()}"
-        brief = _sanitize_local_paths(brief, self.reference_paths + self.data_paths)
         working_manifest = dict(self.manifest)
         self._emit_progress(
             "topic_discovery",
@@ -346,7 +339,17 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
+        # Discover the topic first so its anchor papers can seed this cycle's focus set.
         discovery = self._discover_topic_if_needed(version_dir, working_manifest, loaded_inputs)
+        reference_focus = self._focus_set(baseline_dir, working_manifest, loaded_inputs)
+        reference_query = _reference_query(working_manifest)
+        brief = append_context_to_brief(
+            self.brief, loaded_inputs, self.reference_context_settings,
+            query=reference_query, featured=reference_focus,
+        )
+        if self.additional_context:
+            brief = f"{brief}\n\n## Additional Guidance\n\n{self.additional_context.strip()}"
+        brief = _sanitize_local_paths(brief, self.reference_paths + self.data_paths)
         if discovery:
             brief = f"{brief.strip() or 'TODO'}\n\n## Topic Discovery\n\n{discovery.text}"
         self._emit_progress(
@@ -420,6 +423,7 @@ class PaperPipeline:
                 previous_draft_budget=16000, extra_costs=review_cost,
                 ref_settings=self.reference_context_settings,
                 ref_query=_reference_query(working_manifest),
+                ref_featured=reference_focus,
             )
             draft = _generate(
                 self.client,
@@ -435,6 +439,7 @@ class PaperPipeline:
                 brief, plan_text, previous_draft, self.prompt_budget,
                 ref_settings=self.reference_context_settings,
                 ref_query=_reference_query(working_manifest),
+                ref_featured=reference_focus,
             )
             draft = _generate(
                 self.client,
@@ -507,6 +512,7 @@ class PaperPipeline:
             "start_mode": self.start_mode,
             "accepted": quality_gate["accepted"],
             "quality_gate": quality_gate,
+            "reference_focus": reference_focus,
             "provider": draft.provider,
             "model": draft.model,
             "reviewers": list(reviewers),
@@ -761,6 +767,70 @@ class PaperPipeline:
             task["topic_locked"] = True
         write_json(self.project_dir / "project.json", self.manifest)
 
+    def _focus_set(self, baseline_dir: Path | None, manifest: dict, loaded_inputs: list) -> list[str]:
+        """Pick which reference files this cycle should feature at full length.
+
+        Combines (1) the topic's anchor papers, (2) reviewer-flagged underused
+        references from the baseline, and (3) a rotating batch of papers not yet
+        featured in earlier versions, so each iteration deepens different sources.
+        """
+        all_files = _all_reference_filenames(loaded_inputs)
+        if not all_files:
+            return []
+
+        focus: list[str] = []
+
+        def add(name: str) -> None:
+            base = Path(str(name)).name
+            if base in all_files and base not in focus:
+                focus.append(base)
+
+        for anchor in manifest.get("topic_anchors") or []:
+            add(anchor)
+        if baseline_dir is not None:
+            for name in self._underused_from_reviews(baseline_dir):
+                add(name)
+
+        batch = max(1, self.reference_context_settings.full_count)
+        featured_before = self._featured_history()
+        pool = [f for f in all_files if f not in focus]
+        fresh = [f for f in pool if f not in featured_before]
+        if fresh:
+            rotation = fresh
+        elif pool:
+            # Everything has been featured once; keep rotating via a version offset.
+            version_count = sum(1 for _ in self.project_dir.glob("v*"))
+            offset = (version_count * batch) % len(pool)
+            rotation = pool[offset:] + pool[:offset]
+        else:
+            rotation = []
+        focus.extend(rotation[:batch])
+        return focus
+
+    def _featured_history(self) -> set[str]:
+        featured: set[str] = set()
+        for version_dir in self.project_dir.glob("v*"):
+            metadata = _read_json_or_none(version_dir / "metadata.json")
+            if isinstance(metadata, dict):
+                for name in metadata.get("reference_focus") or []:
+                    featured.add(str(name))
+        return featured
+
+    def _underused_from_reviews(self, baseline_dir: Path) -> list[str]:
+        names: list[str] = []
+        reviews_dir = baseline_dir / "reviews"
+        if not reviews_dir.exists():
+            return names
+        for review_path in sorted(reviews_dir.glob("*.md")):
+            for line in read_text(review_path).splitlines():
+                match = re.match(r"(?i)\s*underused references?\s*:\s*(.+)", line)
+                if not match:
+                    continue
+                for name in re.findall(r"[\w.\-]+\.(?:pdf|docx?|md|txt|csv|xlsx?)", match.group(1)):
+                    if name not in names:
+                        names.append(name)
+        return names
+
     def _quality_gate(
         self,
         manifest: dict,
@@ -1006,6 +1076,24 @@ def _extract_prefixed_line(text: str, prefix: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def _all_reference_filenames(loaded_inputs: list) -> list[str]:
+    names: list[str] = []
+    for group in loaded_inputs or []:
+        for result in getattr(group, "results", ()) or ():
+            if not isinstance(result, dict):
+                continue
+            for document in result.get("documents", []) or []:
+                if not isinstance(document, dict):
+                    continue
+                relative = document.get("relativePath") or document.get("sourcePath")
+                if not relative:
+                    continue
+                base = Path(str(relative)).name
+                if base and base not in names:
+                    names.append(base)
+    return names
+
+
 def _read_json_or_none(path: Path) -> object | None:
     if not path.exists():
         return None
@@ -1093,6 +1181,7 @@ def _trim_brief_for_budget(
     previous_draft_budget: int = 8000, extra_costs: int = 0,
     ref_settings: ReferenceContextSettings | None = None,
     ref_query: str = "",
+    ref_featured: list[str] | tuple[str, ...] = (),
 ) -> str:
     overhead = 800
     plan_size = len(plan.strip()) if plan else 0
@@ -1114,7 +1203,9 @@ def _trim_brief_for_budget(
         ref_budget = max(400, available - len(base_brief))
         if len(ref_section) <= ref_budget:
             return brief
-        clipped = budget_reference_context(ref_section, ref_settings, ref_query, limit=ref_budget)
+        clipped = budget_reference_context(
+            ref_section, ref_settings, ref_query, limit=ref_budget, featured=ref_featured
+        )
         return f"{base_brief}{marker}{clipped}"
     return brief[:available].rstrip()
 
