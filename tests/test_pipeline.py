@@ -1437,6 +1437,20 @@ def test_reference_focus_rotates_and_keeps_anchors(tmp_path: Path) -> None:
     assert set(focus2) - set(focus1)
 
 
+def test_draft_prompt_names_focus_and_forbids_unavailable_excuse() -> None:
+    from asl.templates import draft_prompt, iterative_draft_prompt
+
+    manifest = {"title": "T", "topic": "sustainability"}
+    direct = draft_prompt(manifest, "plan", "Brief mentioning 4.pdf", focus=["4.pdf", "20.pdf"])
+    assert "Focus references for this draft: 4.pdf, 20.pdf" in direct
+    assert "never describe a provided reference as unavailable" in direct
+    iterative = iterative_draft_prompt(
+        manifest, "plan", "brief", "previous", "reviews", "revision", focus=["9.pdf"]
+    )
+    assert "Focus references for this draft: 9.pdf" in iterative
+    assert "text-pending" in iterative
+
+
 def test_underused_references_parsed_from_reviews(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path, slug="underused", title="U", topic="t", brief="b",

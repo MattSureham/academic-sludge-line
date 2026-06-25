@@ -429,7 +429,7 @@ class PaperPipeline:
                 self.client,
                 iterative_draft_prompt(
                     working_manifest, plan_text, draft_brief, previous_draft,
-                    review_summary, revision_plan_text,
+                    review_summary, revision_plan_text, focus=reference_focus,
                 ),
                 offline_draft(working_manifest, plan_text, brief, previous_draft),
                 role="draft",
@@ -443,7 +443,7 @@ class PaperPipeline:
             )
             draft = _generate(
                 self.client,
-                draft_prompt(working_manifest, plan_text, draft_brief, previous_draft),
+                draft_prompt(working_manifest, plan_text, draft_brief, previous_draft, focus=reference_focus),
                 offline_draft(working_manifest, plan_text, brief, previous_draft),
                 role="draft",
             )
