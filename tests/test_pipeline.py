@@ -1447,10 +1447,14 @@ def test_underused_references_parsed_from_reviews(tmp_path: Path) -> None:
     (baseline / "reviews" / "evidence.md").write_text(
         "Major issues\nUnderused references: 4.pdf, 19.pdf\n", encoding="utf-8"
     )
+    # Real models prefix the line with a list number and markdown bold.
     (baseline / "reviews" / "methods.md").write_text(
+        "5. **Underused references:** 27.pdf\n", encoding="utf-8"
+    )
+    (baseline / "reviews" / "style.md").write_text(
         "Underused references: none\n", encoding="utf-8"
     )
-    assert pipeline._underused_from_reviews(baseline) == ["4.pdf", "19.pdf"]
+    assert pipeline._underused_from_reviews(baseline) == ["4.pdf", "19.pdf", "27.pdf"]
 
 
 def test_preflight_raises_when_configured_model_unavailable(tmp_path: Path) -> None:

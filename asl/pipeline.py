@@ -823,10 +823,11 @@ class PaperPipeline:
             return names
         for review_path in sorted(reviews_dir.glob("*.md")):
             for line in read_text(review_path).splitlines():
-                match = re.match(r"(?i)\s*underused references?\s*:\s*(.+)", line)
+                match = re.search(r"(?i)underused references?\b", line)
                 if not match:
                     continue
-                for name in re.findall(r"[\w.\-]+\.(?:pdf|docx?|md|txt|csv|xlsx?)", match.group(1)):
+                # Tolerate list numbers and markdown, e.g. "5. **Underused references:** 4.pdf".
+                for name in re.findall(r"[\w.\-]+\.(?:pdf|docx?|md|txt|csv|xlsx?)", line[match.end():]):
                     if name not in names:
                         names.append(name)
         return names
