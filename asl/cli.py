@@ -14,6 +14,7 @@ from .pipeline import (
     START_MODES,
     ModelUnavailableError,
     PaperPipeline,
+    TopicSelectionPending,
     init_project,
 )
 from .reference_search import ReferenceSearchSettings
@@ -139,6 +140,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="for the select strategy, how many top references to include at full length (default: 6)",
     )
     run.add_argument(
+        "--topic-mode",
+        choices=("auto", "manual"),
+        default="auto",
+        help="discover-topic: auto picks the top proposal; manual writes proposals and waits for --topic-choice",
+    )
+    run.add_argument(
+        "--topic-choice",
+        type=int,
+        default=None,
+        help="discover-topic: select the Nth proposed topic (1-based)",
+    )
+    run.add_argument(
+        "--topic-count",
+        type=int,
+        default=3,
+        help="discover-topic: how many candidate topics to propose (default: 3)",
+    )
+    run.add_argument(
         "--from",
         dest="from_version",
         help="start from a specific version (e.g. v2) instead of the accepted version",
@@ -208,12 +227,19 @@ def main(argv: list[str] | None = None) -> int:
             prompt_budget=args.max_prompt_chars,
             from_version=args.from_version,
             additional_context=args.additional_context,
+            topic_mode=args.topic_mode,
+            topic_choice=args.topic_choice,
+            topic_count=args.topic_count,
         )
         try:
             created = pipeline.run(cycles=args.cycles, reviewers=reviewers)
         except ModelUnavailableError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        except TopicSelectionPending as exc:
+            print(str(exc))
+            print("\nRe-run with --topic-choice N to select a topic and continue.")
+            return 0
         for path in created:
             print(path)
         return 0

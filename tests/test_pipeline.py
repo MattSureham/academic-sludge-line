@@ -18,7 +18,7 @@ from asl.cli import main
 from asl.html_render import render_version_html
 from asl.local_providers import cc_switch_settings_for_ref
 from asl.llm import LLMClient, LLMResult, parse_model_chain
-from asl.pipeline import ModelUnavailableError, PaperPipeline, init_project
+from asl.pipeline import ModelUnavailableError, PaperPipeline, TopicSelectionPending, init_project
 from asl.reference_search import ReferenceCandidate, ReferenceSearchSettings
 from asl.smart_loader import SmartLoader
 from asl.templates import (
@@ -1342,6 +1342,76 @@ def test_discover_topic_writes_back_title_and_persists(tmp_path: Path) -> None:
     assert (project / "v1" / "topic_proposal.md").exists()
     assert not (project / "v2" / "topic_proposal.md").exists()
     assert (project / "v1" / "draft.md").read_text().splitlines()[0].lstrip("# ").strip() == manifest["title"]
+
+
+def test_parse_topic_candidates_handles_blocks_and_fallback() -> None:
+    from asl.pipeline import _parse_topic_candidates
+
+    text = (
+        "## Topic 1\nTopic: A\nResearch question: A?\nAnchor papers: 10.pdf, 12.pdf\nRationale: r1\n\n"
+        "## Topic 2\nTopic: B\nResearch question: B?\nAnchor papers: 24.pdf\nRationale: r2\n\n"
+        "Evidence boundary: conceptual only"
+    )
+    candidates = _parse_topic_candidates(text)
+    assert [c["topic"] for c in candidates] == ["A", "B"]
+    assert candidates[0]["anchors"] == ["10.pdf", "12.pdf"]
+    # Legacy single-topic output still yields one candidate.
+    legacy = _parse_topic_candidates("Topic: Solo\nResearch question: Q?")
+    assert len(legacy) == 1 and legacy[0]["topic"] == "Solo"
+
+
+def _discover_project_with_refs(tmp_path: Path, slug: str) -> Path:
+    refs = tmp_path / "refs"
+    refs.mkdir(exist_ok=True)
+    for i in range(1, 5):
+        (refs / f"{i}.md").write_text(f"# Reference {i}\n\n" + ("body " * 80), encoding="utf-8")
+    return init_project(
+        root=tmp_path,
+        slug=slug,
+        title="Untitled Paper",
+        topic=None,
+        start_mode="discover-topic",
+        brief="Synthesize the references.",
+    )
+
+
+def test_discover_topic_auto_selects_top_candidate_and_records_anchors(tmp_path: Path) -> None:
+    project = _discover_project_with_refs(tmp_path, "auto")
+    refs = tmp_path / "refs"
+    PaperPipeline(
+        project, client=LLMClient(offline=True), reference_paths=(refs,),
+        topic_mode="auto", topic_count=3,
+    ).run()
+
+    manifest = read_json(project / "project.json")
+    assert not manifest["topic"].upper().startswith("TODO")
+    assert manifest["task"]["topic_locked"] is True
+    assert isinstance(manifest.get("topic_anchors"), list) and manifest["topic_anchors"]
+    assert len(read_json(project / "topic_candidates.json")) == 3
+    assert (project / "v1" / "draft.md").exists()
+
+
+def test_discover_topic_manual_waits_for_choice(tmp_path: Path) -> None:
+    project = _discover_project_with_refs(tmp_path, "manual")
+    refs = tmp_path / "refs"
+
+    with pytest.raises(TopicSelectionPending) as exc_info:
+        PaperPipeline(
+            project, client=LLMClient(offline=True), reference_paths=(refs,),
+            topic_mode="manual", topic_count=3,
+        ).run()
+    assert len(exc_info.value.candidates) == 3
+    assert (project / "topic_proposals.md").exists()
+    assert not (project / "v1").exists()  # no half-built version left behind
+
+    # The chosen-topic re-run reuses cached candidates and drafts from v1.
+    created = PaperPipeline(
+        project, client=LLMClient(offline=True), reference_paths=(refs,),
+        topic_mode="manual", topic_choice=2, topic_count=3,
+    ).run()
+    assert created[0].name == "v1"
+    assert (project / "v1" / "draft.md").exists()
+    assert read_json(project / "project.json")["task"]["topic_locked"] is True
 
 
 def test_preflight_raises_when_configured_model_unavailable(tmp_path: Path) -> None:

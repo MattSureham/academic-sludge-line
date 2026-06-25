@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
@@ -24,6 +25,7 @@ from .smart_loader import (
     SmartLoaderSettings,
     append_context_to_brief,
     budget_reference_context,
+    render_context_for_prompt,
     resolve_input_paths,
 )
 from .templates import (
@@ -71,6 +73,22 @@ PIPELINE_ROLES = ("plan", "draft", "review", "revision", "score")
 
 class ModelUnavailableError(RuntimeError):
     """A configured model for a pipeline role cannot run (e.g. missing credentials)."""
+
+
+class TopicSelectionPending(RuntimeError):
+    """Manual topic mode discovered candidates and is waiting for a --topic-choice."""
+
+    def __init__(self, candidates: list[dict], proposal_path: Path) -> None:
+        self.candidates = candidates
+        self.proposal_path = proposal_path
+        lines = [
+            f"  {index}. {candidate.get('topic', '(untitled)')}"
+            for index, candidate in enumerate(candidates, start=1)
+        ]
+        super().__init__(
+            "Manual topic mode: review the proposed topics and re-run with --topic-choice N.\n"
+            f"Proposals written to {proposal_path}\n" + "\n".join(lines)
+        )
 
 
 def init_project(
@@ -177,6 +195,9 @@ class PaperPipeline:
         prompt_budget: int = DRAFT_PROMPT_BUDGET,
         from_version: str | None = None,
         additional_context: str | None = None,
+        topic_mode: str = "auto",
+        topic_choice: int | None = None,
+        topic_count: int = 3,
     ) -> None:
         self.project_dir = project_dir.resolve()
         self.client = client or LLMClient()
@@ -222,6 +243,10 @@ class PaperPipeline:
         self.prompt_budget = prompt_budget
         self.from_version = from_version
         self.additional_context = additional_context
+        self.topic_mode = topic_mode if topic_mode in {"auto", "manual"} else "auto"
+        self.topic_choice = topic_choice
+        self.topic_count = max(1, topic_count)
+        self.discovery_survey_chars = 30_000
 
     def run(self, cycles: int = 1, reviewers: tuple[str, ...] = DEFAULT_REVIEWERS) -> list[Path]:
         created: list[Path] = []
@@ -321,7 +346,7 @@ class PaperPipeline:
             total_cycles=total_cycles,
             version=version_dir.name,
         )
-        discovery = self._discover_topic_if_needed(version_dir, working_manifest, brief)
+        discovery = self._discover_topic_if_needed(version_dir, working_manifest, loaded_inputs)
         if discovery:
             brief = f"{brief.strip() or 'TODO'}\n\n## Topic Discovery\n\n{discovery.text}"
         self._emit_progress(
@@ -671,34 +696,64 @@ class PaperPipeline:
         if groups:
             write_json(version_dir / "inputs" / "smart_loader.json", [group.metadata() for group in groups])
 
-    def _discover_topic_if_needed(self, version_dir: Path, manifest: dict, brief: str) -> object | None:
+    def _discover_topic_if_needed(self, version_dir: Path, manifest: dict, loaded_inputs: list) -> object | None:
         if self.start_mode != "discover-topic":
             return None
         # Discover once: later cycles reuse the persisted topic so versions don't drift.
         if not _topic_is_placeholder(manifest.get("topic")):
             return None
 
-        discovery = _generate(
-            self.client,
-            topic_discovery_prompt(manifest, brief),
-            offline_topic_discovery(manifest, brief),
-            role="plan",
-        )
-        write_text(version_dir / "topic_proposal.md", discovery.text)
-        topic = _extract_prefixed_line(discovery.text, "Topic")
-        research_question = _extract_prefixed_line(discovery.text, "Research question")
+        candidates_path = self.project_dir / "topic_candidates.json"
+        discovery = None
+        candidates = _read_json_or_none(candidates_path)
+        if not candidates:
+            # Survey ALL references (every paper gets a short excerpt) so discovery
+            # is not biased to whichever few the draft strategy would feature.
+            survey = render_context_for_prompt(
+                loaded_inputs, ReferenceContextSettings("balanced", limit=self.discovery_survey_chars)
+            )
+            survey = _sanitize_local_paths(survey, self.reference_paths + self.data_paths)
+            discovery = _generate(
+                self.client,
+                topic_discovery_prompt(manifest, survey, self.topic_count),
+                offline_topic_discovery(manifest, survey, self.topic_count),
+                role="plan",
+            )
+            write_text(version_dir / "topic_proposal.md", discovery.text)
+            write_text(self.project_dir / "topic_proposals.md", discovery.text)
+            candidates = _parse_topic_candidates(discovery.text)
+            write_json(candidates_path, candidates)
+
+        if not candidates:
+            return discovery
+
+        choice = self.topic_choice
+        if choice is None:
+            if self.topic_mode == "manual":
+                # Don't leave a half-built version dir; the chosen-topic re-run
+                # should start cleanly at the same version number.
+                shutil.rmtree(version_dir, ignore_errors=True)
+                raise TopicSelectionPending(candidates, self.project_dir / "topic_proposals.md")
+            choice = 1
+        index = min(max(int(choice), 1), len(candidates)) - 1
+        selected = candidates[index]
+
+        topic = selected.get("topic")
+        research_question = selected.get("research_question")
+        anchors = selected.get("anchors") or []
         if topic:
             manifest["topic"] = topic
             if _title_is_placeholder(manifest.get("title")):
                 manifest["title"] = topic
         if research_question:
             manifest["research_question"] = research_question
+        manifest["topic_anchors"] = anchors
         if topic or research_question:
             self._persist_topic_discovery(manifest)
         return discovery
 
     def _persist_topic_discovery(self, manifest: dict) -> None:
-        for key in ("title", "topic", "research_question"):
+        for key in ("title", "topic", "research_question", "topic_anchors"):
             if key in manifest:
                 self.manifest[key] = manifest[key]
         task = self.manifest.get("task")
@@ -949,6 +1004,48 @@ def _extract_prefixed_line(text: str, prefix: str) -> str | None:
     pattern = re.compile(rf"^{re.escape(prefix)}:\s*(.+)$", flags=re.IGNORECASE | re.MULTILINE)
     match = pattern.search(text)
     return match.group(1).strip() if match else None
+
+
+def _read_json_or_none(path: Path) -> object | None:
+    if not path.exists():
+        return None
+    try:
+        return read_json(path)
+    except (ValueError, OSError):
+        return None
+
+
+def _parse_topic_candidates(text: str) -> list[dict]:
+    """Parse the multi-topic discovery output into candidate dicts.
+
+    Falls back to a single candidate built from any top-level Topic/Research
+    question lines when the model does not emit the ``## Topic`` block format.
+    """
+    blocks = re.split(r"(?mi)^\s*##\s*topic\b.*$", text)
+    candidates: list[dict] = []
+    for block in blocks:
+        topic = _extract_prefixed_line(block, "Topic")
+        research_question = _extract_prefixed_line(block, "Research question")
+        if not topic and not research_question:
+            continue
+        anchors_line = _extract_prefixed_line(block, "Anchor papers") or ""
+        anchors = re.findall(r"[\w.\-]+\.(?:pdf|docx?|md|txt|csv|xlsx?)", anchors_line)
+        candidates.append(
+            {
+                "topic": topic,
+                "research_question": research_question,
+                "anchors": anchors,
+                "rationale": _extract_prefixed_line(block, "Rationale"),
+            }
+        )
+    if not candidates:
+        topic = _extract_prefixed_line(text, "Topic")
+        research_question = _extract_prefixed_line(text, "Research question")
+        if topic or research_question:
+            candidates.append(
+                {"topic": topic, "research_question": research_question, "anchors": [], "rationale": None}
+            )
+    return candidates
 
 
 def _topic_is_placeholder(topic: str | None) -> bool:

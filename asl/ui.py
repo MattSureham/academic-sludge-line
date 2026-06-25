@@ -19,7 +19,14 @@ from urllib.parse import parse_qs, urlparse
 from . import __version__
 from .catalog import catalog_payload
 from .llm import LLMClient
-from .pipeline import DEFAULT_REVIEWERS, DRAFT_PROMPT_BUDGET, PaperPipeline, init_project, init_project_at
+from .pipeline import (
+    DEFAULT_REVIEWERS,
+    DRAFT_PROMPT_BUDGET,
+    PaperPipeline,
+    TopicSelectionPending,
+    init_project,
+    init_project_at,
+)
 from .reference_search import ReferenceSearchSettings
 from .smart_loader import (
     PROMPT_CONTEXT_LIMIT,
@@ -276,6 +283,8 @@ def _start_run_job(
         job.mark_running()
         try:
             result = _run_project(run_payload, cwd, progress=job.update)
+        except TopicSelectionPending as exc:
+            job.fail(f"{exc}\n\nRe-run with a Topic choice to continue.", "")
         except Exception as exc:  # noqa: BLE001 - surfaced to the local UI.
             job.fail(str(exc), traceback.format_exc())
         else:
@@ -317,6 +326,9 @@ def _run_project(payload: dict, cwd: Path, progress: Callable[[dict[str, object]
         additional_context=payload.get("additionalContext") or None,
         prompt_budget=_int_setting(payload.get("maxPromptChars"), DRAFT_PROMPT_BUDGET),
         reference_context_settings=_reference_context_settings(payload.get("referenceContext", {})),
+        topic_mode=("manual" if str(payload.get("topicMode") or "auto").strip().lower() == "manual" else "auto"),
+        topic_choice=_optional_int(payload.get("topicChoice")),
+        topic_count=_int_setting(payload.get("topicCount"), 3),
         progress_callback=progress,
     )
     created = pipeline.run(cycles=max(1, int(payload.get("cycles") or 1)), reviewers=reviewers)
@@ -718,6 +730,15 @@ def _int_setting(value: object, default: int) -> int:
     return max(1, parsed)
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _split_paths(value: object) -> list[str]:
     if not value:
         return []
@@ -822,6 +843,21 @@ _INDEX_HTML = """<!doctype html>
           </label>
           <label>Full references (select)
             <input id="referenceContextFull" type="number" min="1" value="6">
+          </label>
+        </div>
+        <div class="inline-fields">
+          <label>Topic mode (discover)
+            <select id="topicMode">
+              <option value="auto">auto — use the top proposal</option>
+              <option value="manual">manual — propose, then pick</option>
+            </select>
+            <span class="field-note">Manual writes proposals, then re-run with a choice.</span>
+          </label>
+          <label>Topic choice
+            <input id="topicChoice" type="number" min="1" placeholder="auto">
+          </label>
+          <label>Topics proposed
+            <input id="topicCount" type="number" min="1" value="3">
           </label>
         </div>
         <label>Focus guidance
@@ -2283,6 +2319,9 @@ async function runProject(event) {
       chars: $("referenceContextChars").value,
       fullCount: $("referenceContextFull").value,
     },
+    topicMode: $("topicMode").value,
+    topicChoice: $("topicChoice").value,
+    topicCount: $("topicCount").value,
     offline: $("offline").checked,
     allowAgentTools: $("allowAgentTools").checked,
     allowLocalAgents: $("allowLocalAgents").checked,

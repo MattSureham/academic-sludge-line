@@ -54,7 +54,7 @@ Three ways to begin a paper:
 | Mode | Behaviour |
 |------|-----------|
 | `from-scratch` | Draft from topic + brief + references. Default. |
-| `discover-topic` | LLM discovers a topic and research question from the supplied data before drafting. |
+| `discover-topic` | Surveys ALL references (balanced survey, every paper gets a short excerpt) and proposes `--topic-count` candidate topics, each with anchor papers. `--topic-mode auto` (default) locks the top proposal and drafts; `--topic-mode manual` writes the proposals (`topic_proposals.md` / `topic_candidates.json`) and stops until you re-run with `--topic-choice N`. The chosen topic and its `topic_anchors` are persisted to `project.json`. |
 | `rewrite` | Takes a seed draft file (PDF/DOCX/markdown), extracts text via smart-loader, and rewrites it with evidence discipline. |
 
 ## Iterative improvement mechanism

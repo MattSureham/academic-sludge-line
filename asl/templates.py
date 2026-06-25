@@ -174,24 +174,33 @@ def revision_prompt(manifest: dict, draft: str, reviews: list[str]) -> str:
     return prompt
 
 
-def topic_discovery_prompt(manifest: dict, brief: str) -> str:
+def topic_discovery_prompt(manifest: dict, brief: str, count: int = 3) -> str:
     prompt = dedent(
         f"""
-        Identify a strong research topic from the supplied data and references.
+        You are given a corpus of references, each shown with its source filename.
+        Survey ALL of them, then propose {count} distinct, defensible research
+        topics the corpus could support.
 
         Workspace title: {manifest["title"]}
 
-        Return exactly these sections:
+        For EACH topic return exactly this block (best topic first):
+        ## Topic <n>
         Topic: <one sentence topic>
         Research question: <one focused research question>
-        Rationale: <why the available materials can support it>
-        Evidence boundary: <what the data/references can and cannot support>
-        First outline: <5-7 bullet outline>
+        Anchor papers: <3-5 source filenames this topic centres on, comma-separated, e.g. 10.pdf, 12.pdf, 18.pdf>
+        Rationale: <why the corpus supports it; which papers are central vs peripheral>
 
-        Source material:
+        After the {count} blocks add one line:
+        Evidence boundary: <what the corpus can and cannot support overall>
+
+        Centre each topic on papers that have substantive text in the corpus; a
+        paper shown only as a title or a single line is a weak anchor. Use the exact
+        filenames as they appear in the source material.
+
+        Source material (all references, briefly):
         """
     ).strip()
-    return f"{prompt}\n{_excerpt(brief, 12000)}"
+    return f"{prompt}\n{_excerpt(brief, 28000)}"
 
 
 def score_prompt(manifest: dict, previous_draft: str, candidate_draft: str) -> str:
@@ -221,29 +230,38 @@ def score_prompt(manifest: dict, previous_draft: str, candidate_draft: str) -> s
     return f"{prompt}\n{_excerpt(previous_draft, 9000)}\n\nCandidate draft:\n{_excerpt(candidate_draft, 9000)}"
 
 
-def offline_topic_discovery(manifest: dict, brief: str) -> str:
+def offline_topic_discovery(manifest: dict, brief: str, count: int = 3) -> str:
     topic = manifest.get("topic") or "evidence-led topic from supplied materials"
     if "TODO: discover" in topic:
         topic = "Evidence-led topic from supplied data and references"
-    template = dedent(
-        f"""
-        Topic: {topic}
-        Research question: What question can be responsibly answered with the supplied data and references?
-        Rationale: The materials should be reviewed before making factual claims. Use them to narrow the topic,
-        identify the evidence boundary, and avoid unsupported conclusions.
-        Evidence boundary: Treat all claims as provisional until the loaded materials are mapped into an evidence ledger.
-        First outline:
-        - Research question and motivation
-        - Available data and references
-        - Evidence boundary
-        - Proposed method
-        - Expected limitations
-        - Next evidence collection steps
+    anchors = ", ".join(_first_filenames(brief, 3)) or "TODO: anchor papers"
+    blocks = []
+    for index in range(1, max(1, count) + 1):
+        blocks.append(
+            dedent(
+                f"""
+                ## Topic {index}
+                Topic: {topic} (angle {index})
+                Research question: What question can be responsibly answered with the supplied data and references (angle {index})?
+                Anchor papers: {anchors}
+                Rationale: Reviewed offline; anchor papers chosen as those with the most substantive supplied text. Treat all claims as provisional.
+                """
+            ).strip()
+        )
+    body = "\n\n".join(blocks)
+    return f"{body}\n\nEvidence boundary: Treat all claims as provisional until the loaded materials are mapped into an evidence ledger.\n\nMaterial snapshot:\n{_excerpt(brief, 1200)}"
 
-        Material snapshot:
-        """
-    ).strip()
-    return f"{template}\n{_excerpt(brief, 1200)}"
+
+def _first_filenames(text: str, limit: int) -> list[str]:
+    import re
+
+    seen: list[str] = []
+    for match in re.findall(r"[\w.\-]+\.(?:pdf|docx?|md|txt|csv|xlsx?)", text):
+        if match not in seen:
+            seen.append(match)
+        if len(seen) >= limit:
+            break
+    return seen
 
 
 def offline_score(manifest: dict, previous_draft: str, candidate_draft: str) -> str:
