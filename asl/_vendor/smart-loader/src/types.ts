@@ -5,6 +5,7 @@ export type SupportedFormat =
   | "csv"
   | "html"
   | "pdf"
+  | "caj"
   | "docx"
   | "doc";
 

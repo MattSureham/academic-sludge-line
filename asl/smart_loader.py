@@ -522,13 +522,22 @@ def _annotate_results_with_ocr(results: list[dict[str, Any]], language: str) -> 
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=120,
                 )
                 if completed.returncode == 0 and completed.stdout.strip():
                     asset["ocrText"] = completed.stdout.strip()
                 elif completed.stderr.strip():
                     warnings = document.setdefault("warnings", [])
-                    warnings.append(f"OCR failed for {file_path.name}: {completed.stderr.strip()}")
+                    warnings.append(f"OCR failed for {file_path.name}: {_compact_process_text(completed.stderr)}")
+
+
+def _compact_process_text(text: str, limit: int = 500) -> str:
+    compacted = " ".join(text.split())
+    if len(compacted) <= limit:
+        return compacted
+    return f"{compacted[:limit].rstrip()}..."
 
 
 def _append_loader_warning_if_assets(results: list[dict[str, Any]], warning: str) -> None:

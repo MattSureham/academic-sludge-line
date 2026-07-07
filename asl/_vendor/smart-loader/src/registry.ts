@@ -1,6 +1,7 @@
 import type { FileLoader, SupportedFormat } from "./types.js";
 import { loadDoc } from "./loaders/doc.js";
 import { loadDocx } from "./loaders/docx.js";
+import { loadCaj } from "./loaders/caj.js";
 import { loadPdf } from "./loaders/pdf.js";
 import { loadCsv, loadHtml, loadJson, loadMarkdown, loadText } from "./loaders/text.js";
 
@@ -13,6 +14,7 @@ export const EXTENSION_TO_FORMAT = new Map<string, SupportedFormat>([
   [".html", "html"],
   [".htm", "html"],
   [".pdf", "pdf"],
+  [".caj", "caj"],
   [".docx", "docx"],
   [".doc", "doc"]
 ]);
@@ -24,6 +26,7 @@ export const FORMAT_LOADERS: Record<SupportedFormat, FileLoader> = {
   csv: loadCsv,
   html: loadHtml,
   pdf: loadPdf,
+  caj: loadCaj,
   docx: loadDocx,
   doc: loadDoc
 };

@@ -42,6 +42,37 @@ describe("smart-loader", () => {
     expect(document?.format).toBe("pdf");
     expect(document?.text).toContain("Hello from a generated PDF.");
   });
+
+  it("discovers CAJ files and falls back to outline metadata", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "smart-loader-caj-test-"));
+    const filePath = path.join(dir, "sample.caj");
+    const buffer = Buffer.alloc(0x158 + 4 + 0x134);
+    buffer.write("HN\0\0", 0, "latin1");
+    buffer.writeInt32LE(1, 0x158);
+    buffer.write("Abstract", 0x158 + 4, "ascii");
+    buffer.write("3\0", 0x158 + 4 + 280, "ascii");
+    buffer.writeInt32LE(1, 0x158 + 4 + 0x130);
+    await fs.writeFile(filePath, buffer);
+
+    const previousConverter = process.env.SMART_LOADER_CAJ2PDF;
+    process.env.SMART_LOADER_CAJ2PDF = path.join(dir, "missing-caj2pdf");
+    try {
+      const result = await loadPath(dir, { chunkSize: 1000, chunkOverlap: 100 });
+      const document = result.documents.find((doc) => doc.relativePath === "sample.caj");
+
+      expect(result.summary.discoveredFiles).toBe(1);
+      expect(result.summary.loadedFiles).toBe(1);
+      expect(document?.format).toBe("caj");
+      expect(document?.text).toContain("Abstract");
+      expect(document?.warnings.join("\n")).toContain("outline metadata");
+    } finally {
+      if (previousConverter === undefined) {
+        delete process.env.SMART_LOADER_CAJ2PDF;
+      } else {
+        process.env.SMART_LOADER_CAJ2PDF = previousConverter;
+      }
+    }
+  });
 });
 
 async function writePdf(filePath: string, text: string): Promise<void> {

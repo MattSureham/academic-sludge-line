@@ -153,12 +153,16 @@ default. Set `ASL_SMART_LOADER` or pass `--smart-loader` only when you want to
 override it with another loader checkout or CLI.
 
 The loader accepts files or folders and supports Markdown, text, CSV, JSON,
-HTML, PDF, DOCX, and legacy DOC through the bundled `smart-loader` project.
-PDF text is extracted directly when possible. For scanned or image-heavy PDFs,
-ASL asks `smart-loader` to render PDF pages into image assets, then optionally
-runs OCR over extracted image assets when `tesseract` is installed. DOCX files
-are converted to Markdown and embedded images are extracted into the version's
-`inputs/assets/` folder.
+HTML, PDF, CAJ, DOCX, and legacy DOC through the bundled `smart-loader`
+project. PDF text is extracted directly when possible. CAJ loading is best
+effort: install `mutool` (`brew install mupdf-tools`) and a `caj2pdf`
+executable, or set `SMART_LOADER_CAJ2PDF` to a converter script. KDH/CAJ files
+are converted to PDF first and then text-extracted; HN/image-oriented CAJ files
+may only yield page or outline metadata unless OCR support is added. For
+scanned or image-heavy PDFs, ASL asks `smart-loader` to render PDF pages into
+image assets, then optionally runs OCR over extracted image assets when
+`tesseract` is installed. DOCX files are converted to Markdown and embedded
+images are extracted into the version's `inputs/assets/` folder.
 
 Useful loader options:
 

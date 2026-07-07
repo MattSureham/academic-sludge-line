@@ -1,4 +1,4 @@
-export type SupportedFormat = "markdown" | "text" | "json" | "csv" | "html" | "pdf" | "docx" | "doc";
+export type SupportedFormat = "markdown" | "text" | "json" | "csv" | "html" | "pdf" | "caj" | "docx" | "doc";
 export type AssetKind = "image" | "page-image" | "attachment";
 export interface LoaderAsset {
     id: string;
