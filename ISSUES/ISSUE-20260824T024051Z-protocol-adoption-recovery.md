@@ -4,16 +4,16 @@
 
 - **ID:** `ISSUE-20260824T024051Z-protocol-adoption-recovery`
 - **Title:** Adopt the protocol and recover a trustworthy repository baseline
-- **Status:** `REVIEW`
+- **Status:** `CLOSED`
 - **Severity:** `HIGH`
 - **Owner:** `agent:codex-recovery`
 - **Authority:** `HUMAN`
 - **Review:** `INDEPENDENT`
 - **Created UTC:** `2026-08-24T02:40:51Z`
-- **Updated UTC:** `2026-08-24T03:46:47Z`
+- **Updated UTC:** `2026-08-24T06:25:44Z`
 - **Requirements:** [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) §§10–13
 - **ADRs:** [`ADR-20260824T024051Z-protocol-adoption`](../ADR/ADR-20260824T024051Z-protocol-adoption.md) (`ACCEPTED`)
-- **Evidence:** [`EVIDENCE-20260824T024051Z-repository-recovery`](../EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md), [`EVIDENCE-20260824T024051Z-spec-reconciliation`](../EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md), [`EVIDENCE-20260824T033159Z-governance-independent-review`](../EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md)
+- **Evidence:** [`EVIDENCE-20260824T024051Z-repository-recovery`](../EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md), [`EVIDENCE-20260824T024051Z-spec-reconciliation`](../EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md), [`EVIDENCE-20260824T033159Z-governance-independent-review`](../EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md), [`EVIDENCE-20260824T062544Z-fresh-independent-review`](../EVIDENCE/EVIDENCE-20260824T062544Z-fresh-independent-review.md)
 - **Milestone:** `NONE`
 
 ## Problem
@@ -35,7 +35,7 @@ The repository follows [`BOOTSTRAP.md`](../BOOTSTRAP.md), retains the accepted o
 - **INFERRED:** A byte-verified canonical installation plus explicit project-owned merges is the least ambiguous recovery boundary.
 - **CONFIRMED:** The accepted specification and adoption ADR remain current repository authority; repository participant/owner labels are attributable records, not authenticated identities.
 - **UNKNOWN:** The exact bytes and authorship of the untracked pre-adoption specification cannot be independently reconstructed from repository evidence.
-- **UNKNOWN:** Whether a fresh independent reviewer will approve the containing governance-repair commit.
+- **CONFIRMED:** A fresh independent reviewer approved the containing governance-repair commit `113b8b0` at `2026-08-24T06:25:44Z` with zero open material findings.
 
 ## Investigation and decision
 
@@ -52,7 +52,7 @@ The accepted adoption ADR owns the collision mapping and source revisions. The o
 
 | Cost | Justification | Coverage | Residual issue |
 |---|---|---|---|
-| Governance records and an independent-review gate | Preserve authority and recovery context across replaceable participants | Protocol validator, structural checks, evidence records, and Git history | First review returned `CHANGES_REQUIRED`; fresh review of the containing repair remains pending |
+| Governance records and an independent-review gate | Preserve authority and recovery context across replaceable participants | Protocol validator, structural checks, evidence records, and Git history | First review returned `CHANGES_REQUIRED`; fresh independent review of the repair returned `APPROVED` with zero open material findings |
 
 ## Verification
 
@@ -77,6 +77,7 @@ The accepted adoption ADR owns the collision mapping and source revisions. The o
 | `2026-08-24T03:44:24Z` | `agent:codex-governance-review` | Direct remote checks, legacy/README/untracked digests, ignored-paper sampling, and all-Git-blob provenance search | Refs/digests reproduced; `5` projects/`16` versions/`5` valid pointers/`3` later candidates; parent lacks the specification and none of `439` blobs matches its recorded pre-adoption SHA-256; exit `0` | Independent review evidence, Governance repair verification | Remotes and ignored files are timestamped; missing historical bytes remain unrecoverable |
 | `2026-08-24T03:44:24Z` | `agent:codex-governance-review` | Pointer/score reproduction plus capability-payload and reviewer-guidance traces | Reproduced pointer fallback and malformed `same`/`5`/`5`; `35` models exposed capability lists while execution types did not consume them; structured review/revision/next-iteration traces passed; exit `0` | Independent review evidence, Governance repair verification | Static/isolated checks; no live model/provider call |
 | `2026-08-24T03:44:24Z` | `agent:codex-governance-review` | `git diff --check`, explicit repair-path allowlist, forbidden-path comparison, and `lsof` listener observation | Diff/scope checks passed with exactly nine governance paths and zero product/test/specification paths; all four untracked hashes remained; no `8765` listener (`lsof` exit `1`) | Independent review evidence, Governance repair verification | Listener absence is timestamped; final staged/committed status checked separately |
+| `2026-08-24T06:25:44Z` | `agent:claude-code-independent-review` | Fresh rerun: system-Python suite, loader tests/typecheck, sibling validator, seven `cmp` mappings, digests, remotes, structure/link check, scope diffs, listener check, and direct code traces | `66 passed in 8.61s`; loader four tests in `382ms` and typecheck passed; validator, all byte/digest/remote/scope/structure checks passed; zero missing links; `.venv` pytest still unavailable | [Fresh independent review evidence](../EVIDENCE/EVIDENCE-20260824T062544Z-fresh-independent-review.md) | Same host class; no live provider/network validation |
 
 ## Pipeline state (optional)
 
@@ -115,6 +116,23 @@ NOT APPLICABLE.
 - **Disposition:** `CHANGES_REQUIRED`
 - **Prior-round resolution:** `FIRST ROUND`
 
+### 2026-08-24T06:25:44Z — agent:claude-code-independent-review
+
+- **Reviewed repository state:** Containing governance-repair commit `113b8b015e70de7d7f0903d81b9300adeb060811`, direct parent `e9ef291a0be124a1ea1ad782c6bb307a486f2b18`, grandparent `387bffe632ba2d53c14aa59de93bd645935d9a94` (`origin/main` and direct remote `main`, refreshed); exactly four preserved unrelated untracked JavaScript files; sibling protocol local/tracking/direct remote `main` at `58fa281ee6cb93abc2fea81dd46f8ddef2d8612b` (refreshed).
+- **Reviewed target:** `113b8b015e70de7d7f0903d81b9300adeb060811`
+- **Open material findings:** `0`
+- **Scope:** Fresh independent review of the repair commit against [`BOOTSTRAP.md`](../BOOTSTRAP.md), the accepted adoption ADR, all three prior evidence records, and the `R1`–`R3` resolution conditions: commit chain and remotes, commit scope, byte integrity, historical-state preservation, corrected requirement classifications against the implementation, issue/evidence/checkpoint/handoff consistency, authority boundaries, and the recorded verification baseline.
+- **Commands or procedures:** Read all governance records and the accepted specification before code; verified the commit chain, both remotes, dirty state, and diff cleanliness; reran the system-Python suite (`66 passed in 8.61s`), bundled loader tests (four passed) and typecheck, sibling protocol validator, seven explicit immutable `cmp` mappings, legacy-handoff and four-file digests, Markdown/local-link/HANDOFF structure check (zero missing targets), port `8765` listener check, and the unavailable `.venv` pytest invocation; directly traced `accepted_version()`, `_score_metadata()`, `review_prompt()`, `revision_prompt()`, preset/catalog `capabilities`, and `ModelSpec`/`ModelRoutes`. Full detail is in the linked evidence.
+- **Specification compliance:** Governance records are internally consistent with the accepted specification and ADR; the corrected §4.4 (implemented) and §4.10 (partially implemented) classifications match the implementation as independently traced; no specification behavioral wording changed.
+- **Correctness and regression findings:** No product/runtime/test change in either governance commit; the recorded executable baseline reproduces; no regression found.
+- **Architecture and complexity findings:** The repair introduced no new product architecture or complexity; the governance hierarchy and review gate remain the only added cost and are covered by structural checks, evidence, and Git history.
+- **Material findings and resolution conditions:** `NONE`. Prior-round conditions verified resolved: `R1` — §4.4 corrected to implemented, review-routing/guidance closed with a complete round and removed from active/owner queues; `R2` — §4.10 corrected to partially implemented with the descriptive-metadata-versus-execution distinction; `R3` — exact pre-adoption bytes/authorship downgraded to implementor-recorded, independently unreproducible provenance while accepted authority is retained. All three were applied additively without rewriting prior evidence.
+- **Limitations:** Participant labels are attributable, not authenticated; no live provider, network research, UI, or damaged-workspace validation ran; exact pre-adoption specification bytes remain unrecoverable; this reviewer's link walk also traversed untracked `pytest_cache/README.md` (26 files/147 links versus the tracked 25/145, with zero missing either way).
+- **Residual risks:** §§10–12 full compatibility/completion remains `UNKNOWN` and is owned by the four focused open issues; the owner-gated accepted-pointer decision remains `BLOCKED` separately.
+- **Evidence:** [`EVIDENCE-20260824T062544Z-fresh-independent-review`](../EVIDENCE/EVIDENCE-20260824T062544Z-fresh-independent-review.md)
+- **Disposition:** `APPROVED`
+- **Prior-round resolution:** The first round's `CHANGES_REQUIRED` findings `R1`–`R3` are each resolved as recorded above; the repair stayed within the authorized governance-only scope.
+
 ## Blocker
 
 - **Blocked from:** `NOT BLOCKED`
@@ -124,9 +142,9 @@ NOT APPLICABLE.
 
 ## Residual uncertainty
 
-- The candidate `e9ef291` review returned `CHANGES_REQUIRED`; a fresh independent participant must review the containing governance-repair commit and confirm all three findings are resolved.
+- Resolved: the containing governance-repair commit `113b8b0` received a fresh independent `APPROVED` with zero open material findings at `2026-08-24T06:25:44Z`; all three first-round findings are closed.
 - Exact pre-adoption specification bytes/authorship remain implementor-recorded provenance and cannot be independently reconstructed from repository evidence; current accepted authority is unaffected.
-- Compatibility and initial-completion claims remain uncertain until later refactoring evidence closes the gaps inventoried in the reconciliation record.
+- Compatibility and initial-completion claims remain uncertain until later refactoring evidence closes the gaps inventoried in the reconciliation record; those gaps are owned by the four focused open issues, not by this record.
 
 ## Activity history
 
@@ -140,6 +158,7 @@ NOT APPLICABLE.
 | `2026-08-24T03:31:59Z` | `agent:codex-governance-review` | `REVIEW` | `IMPLEMENTING` | Independent review of immutable target `e9ef291` recorded `CHANGES_REQUIRED` with three material governance findings; began the authorized governance/recovery-only corrections. |
 | `2026-08-24T03:37:13Z` | `agent:codex-governance-review` | `IMPLEMENTING` | `VERIFYING` | Completed additive evidence, classification, issue, ADR, checkpoint, and handoff corrections; began the approved full verification matrix. |
 | `2026-08-24T03:46:47Z` | `agent:codex-governance-review` | `VERIFYING` | `REVIEW` | Full executable, structural, source-integrity, history/provenance, diagnostic, remote, dirty-state, and governance-scope checks passed or reproduced their explicitly recorded unavailable observation; fresh independent review is the only adoption gate. |
+| `2026-08-24T06:25:44Z` | `agent:claude-code-independent-review` | `REVIEW` | `CLOSED` | Fresh independent review of repair commit `113b8b0` recorded `APPROVED` with zero open material findings after rerunning executable, integrity, structural, scope, remote, and diagnostic checks; all `R1`–`R3` conditions verified resolved. |
 
 ## Closure checklist
 
@@ -147,7 +166,7 @@ NOT APPLICABLE.
 - [x] The change or resolution is recorded.
 - [x] Required verification ran and evidence is linked; unavailable checks remain explicit.
 - [x] If `Review: SELF`, the Self-review outcome is `COMPLETE` and no independent-review risk category applies. (Not applicable.)
-- [ ] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
+- [x] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
 - [x] Required human authority is recorded in the owning artifact: product/contract in `PROJECT_SPEC.md`, architecture in an accepted ADR, or both for a mixed decision.
 - [x] New complexity is covered, removed, or linked to an explicitly accepted open debt issue.
 - [x] Residual uncertainty is absent or explicitly owned.

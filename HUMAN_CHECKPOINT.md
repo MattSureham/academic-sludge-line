@@ -4,12 +4,12 @@ This file is a low-bandwidth synchronization point for the human technical owner
 
 ## Checkpoint metadata
 
-- **Generated UTC:** `2026-08-24T03:46:47Z`
-- **Prepared by:** `agent:codex-governance-review`
-- **Period covered:** Product revision `387bffe632ba2d53c14aa59de93bd645935d9a94` through candidate adoption baseline `e9ef291a0be124a1ea1ad782c6bb307a486f2b18` and its governance-only review repair
+- **Generated UTC:** `2026-08-24T06:25:44Z`
+- **Prepared by:** `agent:claude-code-independent-review`
+- **Period covered:** Product revision `387bffe632ba2d53c14aa59de93bd645935d9a94` through candidate adoption baseline `e9ef291a0be124a1ea1ad782c6bb307a486f2b18`, its governance-only review repair, and the fresh independent approval
 - **Specification status reviewed:** [`PROJECT_SPEC.md`](PROJECT_SPEC.md) v0.1, `ACCEPTED` by `human:technical-owner`
-- **Implementation/reference state:** Product code and tests at `387bffe`; adoption baseline `e9ef291` independently reviewed with `CHANGES_REQUIRED`; corrections in the containing governance-only repair commit
-- **Prior checkpoint:** First-adoption checkpoint at `e9ef291`
+- **Implementation/reference state:** Product code and tests at `387bffe`; adoption baseline `e9ef291` independently reviewed with `CHANGES_REQUIRED`; corrections in the containing governance-only repair commit `113b8b0`, which received fresh independent `APPROVED` with zero open material findings; adoption/recovery issue `CLOSED`
+- **Prior checkpoint:** Governance-repair checkpoint at `2026-08-24T03:46:47Z`
 
 ## System mental model
 
@@ -23,10 +23,11 @@ This file is a low-bandwidth synchronization point for the human technical owner
 
 | Change | Why | Product/architecture effect | Evidence and review |
 |---|---|---|---|
-| Accepted specification v0.1 attributed to the technical owner and adopted protocol source hierarchy | Establish current product intent and durable continuity before refactoring | Governance-only; no runtime/API/persistence behavior changed; attribution is recorded but not authenticated | [Accepted adoption ADR](ADR/ADR-20260824T024051Z-protocol-adoption.md); first review returned `CHANGES_REQUIRED`, repair re-review pending |
+| Accepted specification v0.1 attributed to the technical owner and adopted protocol source hierarchy | Establish current product intent and durable continuity before refactoring | Governance-only; no runtime/API/persistence behavior changed; attribution is recorded but not authenticated | [Accepted adoption ADR](ADR/ADR-20260824T024051Z-protocol-adoption.md); first review returned `CHANGES_REQUIRED`, repair approved by fresh independent review |
 | Replaced the historical handoff with an evidence-backed operational snapshot | Prevent legacy implementation claims from becoming requirements | Historical bytes remain in Git; current handoff points to active records | [Repository recovery evidence](EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md) |
 | Classified current behavior against requirements and all fifteen initial invariants | Bound later refactoring to observed gaps | No product code or tests changed | [Reconciliation evidence](EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md) |
 | Independently reviewed `e9ef291` and repaired three material governance findings | Correct §4.4/§4.10 classifications, remove an optional owner escalation, and qualify unreproducible pre-adoption provenance | Governance/recovery records only; accepted authority and product behavior unchanged | [`CHANGES_REQUIRED` review evidence](EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md); containing repair commit still needs fresh review |
+| Fresh independent review approved the repair commit `113b8b0` and closed adoption/recovery | Satisfy the protocol's independent-review gate and exit adoption/recovery | None; governance records only | [`APPROVED` fresh review evidence](EVIDENCE/EVIDENCE-20260824T062544Z-fresh-independent-review.md); adoption issue `CLOSED` |
 
 ## Architecture decisions
 
@@ -51,13 +52,13 @@ This file is a low-bandwidth synchronization point for the human technical owner
 
 | Cost | Why introduced/removed | Coverage | Residual debt |
 |---|---|---|---|
-| Protocol governance records and independent-review gate | Preserve authority and continuity across replaceable participants | Source validator, byte/link/structure checks, evidence records, Git history | Adoption review remains open |
+| Protocol governance records and independent-review gate | Preserve authority and continuity across replaceable participants | Source validator, byte/link/structure checks, evidence records, Git history | Adoption review closed with `APPROVED`; no residual adoption debt |
 | Product/runtime complexity | None introduced in this pass | Product files and tests remain byte-unchanged | Existing gaps are indexed in active issues |
 
 ### Drift assessment
 
-- **Last independent drift review:** Governance/recovery review of `e9ef291` at `2026-08-24T03:31:59Z`; not a comprehensive live-provider or corpus drift review
-- **Classification:** `CHANGES_REQUIRED` for the reviewed governance baseline; product architecture remains otherwise `UNKNOWN` beyond recorded traces
+- **Last independent drift review:** Governance/recovery reviews of `e9ef291` (`CHANGES_REQUIRED`, `2026-08-24T03:31:59Z`) and repair commit `113b8b0` (`APPROVED`, `2026-08-24T06:25:44Z`); not a comprehensive live-provider or corpus drift review
+- **Classification:** Governance/recovery baseline `APPROVED`; product architecture remains otherwise `UNKNOWN` beyond recorded traces
 - **Owner-relevant differences:** Reconciliation found a missing-pointer fallback, fail-open score parsing, character-slice resolution, missing verification state, incomplete normalization evidence, and descriptive capability tags that are not consumed by execution. See the three focused owner issues and the agent-owned quality-gate issue.
 
 ## Assumptions and uncertainty that changed
@@ -75,9 +76,9 @@ This file is a low-bandwidth synchronization point for the human technical owner
 ## Confidence and verification
 
 - **What is directly verified:** Candidate/source refs and status, copied-artifact bytes, target manifest/symlink/link/HANDOFF structure, legacy/unrelated-file digests, current code paths, reviewer-guidance and capability traces, isolated pointer/scorer diagnostics, `66` Python tests, `4` loader tests, and loader typecheck; see [recovery evidence](EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md) and [independent review evidence](EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md).
-- **What was independently reviewed:** Immutable baseline `e9ef291` received `CHANGES_REQUIRED` with three material findings. The same reviewer applied the governance corrections, so the containing repair commit is not approved and requires a fresh participant.
+- **What was independently reviewed:** Immutable baseline `e9ef291` received `CHANGES_REQUIRED` with three material findings. The containing repair commit `113b8b0` then received a fresh independent `APPROVED` with zero open material findings at `2026-08-24T06:25:44Z`; the adoption/recovery issue is `CLOSED`.
 - **What was not run or remains unverified:** `.venv` pytest was unavailable; no real provider credentials, live model endpoint, network research, representative format corpus, OCR-fidelity study, or externally configured CI was verified.
-- **Known regressions or unresolved risks:** No product regression was observed; unresolved risks are four focused active issues plus pending adoption re-review. Exact pre-adoption specification provenance remains independently unreproducible.
+- **Known regressions or unresolved risks:** No product regression was observed; unresolved risks are four focused active issues. Exact pre-adoption specification provenance remains independently unreproducible.
 
 ## Human attention required
 
@@ -88,12 +89,12 @@ This file is a low-bandwidth synchronization point for the human technical owner
 
 ## No human attention required
 
-- Fresh independent review of the containing governance-repair commit is the immediate operational gate.
-- The score-validation slice has not started and must remain untouched until that review approves the baseline; once approved, the accepted specification already authorizes the bounded fail-closed slice without routine reapproval.
+- Fresh independent review of the containing governance-repair commit recorded `APPROVED`; the adoption/recovery gate is satisfied and the issue is closed.
+- The score-validation slice is now unblocked: the accepted specification already authorizes the bounded fail-closed slice without routine reapproval; it requires independent review before closure.
 - Validated reviewer schemas, aggregation, and persona-specific routes are optional §14 work, not a current requirement gap or owner decision.
 - Normalization fixture gathering may proceed later without choosing a new architecture or dependency.
 
 ## Next checkpoint trigger
 
-- **Trigger:** Fresh independent disposition on the containing governance-repair commit, any owner response above, or a proposed evidence/capability ADR.
+- **Trigger:** Any owner response above, a proposed evidence/capability ADR, or completion/review of the score-validation slice.
 - **Expected owner action before then:** No action is required for this governance re-review. Decide only `DECISION-ACCEPTED-POINTER-RECOVERY-v1` if pointer semantics are to enter implementation; other decisions may wait until their issues become selected work.

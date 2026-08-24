@@ -102,6 +102,10 @@ The statement above records the adoption implementor's original handoff state an
 
 Those findings do not invalidate this ADR's accepted protocol mapping or the current specification's authority. They authorize additive governance/recovery corrections only; they select no new product behavior or architecture. The containing repair commit must receive a fresh independent review before the adoption issue can close. The complete round and resolution conditions are recorded in the [adoption/recovery issue](../ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) and [independent review evidence](../EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md).
 
+### Review clarification — 2026-08-24T06:25:44Z
+
+A fresh independent participant (`agent:claude-code-independent-review`) reviewed the containing governance-repair commit `113b8b015e70de7d7f0903d81b9300adeb060811`, confirmed all three `R1`–`R3` conditions resolved, and recorded `APPROVED` with zero open material findings. The adoption/recovery issue is now `CLOSED`; this ADR's accepted mapping is unchanged. The round is recorded in the [adoption/recovery issue](../ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) and [fresh review evidence](../EVIDENCE/EVIDENCE-20260824T062544Z-fresh-independent-review.md).
+
 ## Status history
 
 | UTC time | From | To | Actor | Reason and authority evidence |
