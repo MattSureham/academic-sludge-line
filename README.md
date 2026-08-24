@@ -526,3 +526,7 @@ The framework mirrors the useful parts of large working-paper archives:
 - Treat generated drafts as scaffolding, not publishable scholarship.
 
 See [docs/ethics.md](docs/ethics.md) for the project stance.
+
+## Agent-Native Engineering Protocol
+
+Participants must read [BOOTSTRAP.md](BOOTSTRAP.md) before working in this repository. Adoption guidance is in [PROTOCOL_GUIDE.md](PROTOCOL_GUIDE.md).
