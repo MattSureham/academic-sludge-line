@@ -10,10 +10,10 @@
 - **Authority:** `HUMAN`
 - **Review:** `INDEPENDENT`
 - **Created UTC:** `2026-08-24T02:40:51Z`
-- **Updated UTC:** `2026-08-24T08:10:19Z`
+- **Updated UTC:** `2026-08-24T08:30:14Z`
 - **Requirements:** [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) §§2.4–2.5, 4.8–4.10, 6.1, 6.4, 11 invariants 10–13, and §14
 - **ADRs:** `NONE`
-- **Evidence:** [`EVIDENCE-20260824T024051Z-spec-reconciliation`](../EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md), [`EVIDENCE-20260824T033159Z-governance-independent-review`](../EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md), [`EVIDENCE-20260824T073244Z-normalization-fixture-matrix`](../EVIDENCE/EVIDENCE-20260824T073244Z-normalization-fixture-matrix.md), and candidate [`EVIDENCE-20260824T080248Z-pdf-marker-only-warning`](../EVIDENCE/EVIDENCE-20260824T080248Z-pdf-marker-only-warning.md)
+- **Evidence:** [`EVIDENCE-20260824T024051Z-spec-reconciliation`](../EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md), [`EVIDENCE-20260824T033159Z-governance-independent-review`](../EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md), [`EVIDENCE-20260824T073244Z-normalization-fixture-matrix`](../EVIDENCE/EVIDENCE-20260824T073244Z-normalization-fixture-matrix.md), [`EVIDENCE-20260824T080248Z-pdf-marker-only-warning`](../EVIDENCE/EVIDENCE-20260824T080248Z-pdf-marker-only-warning.md), and [`EVIDENCE-20260824T083014Z-pdf-marker-warning-review`](../EVIDENCE/EVIDENCE-20260824T083014Z-pdf-marker-warning-review.md)
 - **Milestone:** `NONE`
 
 ## Problem
@@ -41,16 +41,16 @@ The normalization boundary preserves useful structure and exposes known degradat
 
 ## Investigation and decision
 
-The normalization evidence-first slice is complete. It selected no schema, parser strategy, dependency, fidelity threshold, or capability architecture. Its smallest observed fail-silent gap is narrower than those owner-gated decisions: the PDF loader treated `pdf-parse`'s `-- n of m --` page-marker boilerplate as extractable content, so an image-only PDF received no OCR/image-heavy warning even though the Python adapter later OCRed a rendered page. Focused child [`ISSUE-20260824T075708Z-pdf-marker-only-warning`](ISSUE-20260824T075708Z-pdf-marker-only-warning.md) now contains a candidate fix that reuses the existing warning shape and preserves valid text-PDF behavior; it remains in independent `REVIEW`. DOCX assets, unsupported directory entries, canonical normalization structure, and capability negotiation remain separate and unchanged.
+The normalization evidence-first slice is complete. It selected no schema, parser strategy, dependency, fidelity threshold, or capability architecture. Its smallest observed fail-silent gap is narrower than those owner-gated decisions: the PDF loader treated `pdf-parse`'s `-- n of m --` page-marker boilerplate as extractable content, so an image-only PDF received no OCR/image-heavy warning even though the Python adapter later OCRed a rendered page. Focused child [`ISSUE-20260824T075708Z-pdf-marker-only-warning`](ISSUE-20260824T075708Z-pdf-marker-only-warning.md) fixed that gap by reusing the existing warning shape while preserving valid text-PDF behavior; it is `CLOSED` after fresh independent `APPROVED` at `2026-08-24T08:30:14Z`. DOCX assets, unsupported directory entries, canonical normalization structure, and capability negotiation remain separate and unchanged.
 
 Separately, later capability work may use the existing preset tags as evidence and propose the minimum stage-requirement/execution contract needed by one demonstrated workflow branch. Owner acceptance is still needed before committing to a new normalization schema or durable capability-negotiation architecture.
 
 ## Change
 
 - **Files or components:** This parent issue owns the diagnostic [`normalization_fixture_probe.mjs`](../EVIDENCE/diagnostics/normalization_fixture_probe.mjs) and broader governance evidence. The focused child candidate changes only the existing PDF loader source/build output and focused tests, as recorded in its issue/evidence.
-- **Behavior changed:** Parent evidence gathering changed none. The focused candidate makes marker-only PDF output emit the existing no-extractable-text warning without changing text/schema or other observed format behavior; independent review is pending.
+- **Behavior changed:** Parent evidence gathering changed none. The focused child makes marker-only PDF output emit the existing no-extractable-text warning without changing text/schema or other observed format behavior; it is independently approved and closed.
 - **Out-of-scope work deliberately excluded:** New parser dependencies, loader or schema redesign, DOCX assets/equations, unsupported-directory reporting, other silent fixture cases, capability negotiation, provider refactor, or generated paper changes.
-- **Rollback or recovery:** Revert the focused candidate's containing commit to restore its single warning-condition behavior; no data or dependency migration is required. The prior evidence/governance commit remains independently reversible.
+- **Rollback or recovery:** Revert the focused child's containing commit to restore its single warning-condition behavior; no data or dependency migration is required. The prior evidence/governance commit remains independently reversible.
 
 ## Unverified complexity
 
@@ -70,7 +70,7 @@ Separately, later capability work may use the existing preset tags as evidence a
 | `2026-08-24T07:38:18Z` | `agent:codex-normalization-evidence` | `file`, DOCX `unzip`/XML probes, `pdftotext`, `pdffonts`, and `pdfimages -list` against generated fixtures | Exit `0`; valid legacy DOC/DOCX/PDF types confirmed; DOCX contains media and OMML; scan PDF contains one image, no fonts, and no extractable text | Normalization fixture evidence | Validates fixture construction, not real-corpus representativeness |
 | `2026-08-24T07:41:59Z` | `agent:codex-normalization-evidence` | `PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider`; bundled `npm test`; `npm run typecheck`; sibling `python3 scripts/validate_protocol.py` | Exit `0`: `76 passed in 9.69s`; one loader file/`4` tests passed in `575ms`; typecheck passed; protocol validator `PASS` | This issue, HANDOFF, and fixture evidence | Suites do not assert the new observations because this slice deliberately did not change product tests/contracts |
 | `2026-08-24T07:47:00Z` | `agent:codex-normalization-evidence` | Post-commit `git show --check`, scoped product/spec/test diff, refs/status/digests/port check, and standard-library Markdown/HANDOFF validation | Exit `0` except expected no-listener `lsof` exit `1`; six evidence/governance/diagnostic paths only, no product/spec/test diff; `30` Markdown files/`180` local links/`0` missing; five HANDOFF sections/one Next Action; four unrelated digests unchanged | Containing evidence commit and HANDOFF | Direct remote remains at published parent; local evidence commit intentionally unpushed |
-| `2026-08-24T08:02:48Z` | `agent:codex-pdf-marker-warning` | Focused PDF regression, compiled CLI/Python adapter probes, full `22`-fixture rerun and normalized before/after comparison, `76` Python tests, `5` loader tests, typecheck/build, protocol validator, and `git diff --check` | Exit `0` after correcting only an invalid embedded test PNG: marker-only warning added; meaningful PDF and all other curated document observations unchanged | [Focused implementation evidence](../EVIDENCE/EVIDENCE-20260824T080248Z-pdf-marker-only-warning.md) | Focused child remains in independent `REVIEW`; broader known silent cases remain open |
+| `2026-08-24T08:02:48Z` | `agent:codex-pdf-marker-warning` | Focused PDF regression, compiled CLI/Python adapter probes, full `22`-fixture rerun and normalized before/after comparison, `76` Python tests, `5` loader tests, typecheck/build, protocol validator, and `git diff --check` | Exit `0` after correcting only an invalid embedded test PNG: marker-only warning added; meaningful PDF and all other curated document observations unchanged | [Focused implementation evidence](../EVIDENCE/EVIDENCE-20260824T080248Z-pdf-marker-only-warning.md) | Focused child is independently approved and closed; broader known silent cases remain open |
 
 ## Pipeline state (optional)
 
@@ -97,7 +97,7 @@ No review round has been recorded.
 ## Blocker
 
 - **Blocked from:** `NOT BLOCKED`
-- **Blocker:** `NONE`; the evidence slice is complete, and the narrow existing-warning-field candidate is independently reviewable without selecting the owner-gated semantic schema. Broader normalization/capability architecture remains owner-gated.
+- **Blocker:** `NONE`; the evidence slice is complete, and the narrow existing-warning-field child fix was independently approved and closed without selecting the owner-gated semantic schema. Broader normalization/capability architecture remains owner-gated.
 - **Unblock owner:** `NONE`
 - **Unblock condition:** `NONE`
 
@@ -117,6 +117,7 @@ No review round has been recorded.
 | `2026-08-24T07:26:24Z` | `agent:codex-normalization-evidence` | `OPEN` | `INVESTIGATING` | Began the HANDOFF-authorized evidence-only fixture matrix. Scope is limited to observing current normalization and warning propagation; no loader, test, dependency, schema, or capability-execution change is authorized. |
 | `2026-08-24T07:40:29Z` | `agent:codex-normalization-evidence` | `INVESTIGATING` | `INVESTIGATING` | Completed and recorded the controlled matrix, corrected invariant 13 to partial through additive evidence, and identified page-marker-only PDF warning detection as the smallest later slice. No product/test behavior or architecture changed. |
 | `2026-08-24T08:02:48Z` | `agent:codex-pdf-marker-warning` | `INVESTIGATING` | `INVESTIGATING` | Implemented and verified the separately scoped page-marker-only warning candidate under agent authority; the child issue is in independent review. Other normalization/capability evidence, decisions, and behavior remain unchanged. |
+| `2026-08-24T08:30:14Z` | `agent:claude-code-independent-review` | `INVESTIGATING` | `INVESTIGATING` | Fresh independent review of the page-marker-only warning commit `e9c503b` recorded `APPROVED` with zero open material findings and closed the focused child issue. The remaining silent normalization cases, canonical schema, and capability negotiation stay open here. |
 
 ## Closure checklist
 

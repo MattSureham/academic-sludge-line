@@ -4,16 +4,16 @@
 
 - **ID:** `ISSUE-20260824T075708Z-pdf-marker-only-warning`
 - **Title:** Warn when PDF extraction contains only parser page markers
-- **Status:** `REVIEW`
+- **Status:** `CLOSED`
 - **Severity:** `MEDIUM`
 - **Owner:** `agent:codex-pdf-marker-warning`
 - **Authority:** `AGENT`
 - **Review:** `INDEPENDENT`
 - **Created UTC:** `2026-08-24T07:57:08Z`
-- **Updated UTC:** `2026-08-24T08:10:19Z`
+- **Updated UTC:** `2026-08-24T08:30:14Z`
 - **Requirements:** [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) §§2.5, 4.8 extraction uncertainty, 6.1, 11 invariant 13, and §12
 - **ADRs:** `NONE`
-- **Evidence:** [`EVIDENCE-20260824T073244Z-normalization-fixture-matrix`](../EVIDENCE/EVIDENCE-20260824T073244Z-normalization-fixture-matrix.md) and [`EVIDENCE-20260824T080248Z-pdf-marker-only-warning`](../EVIDENCE/EVIDENCE-20260824T080248Z-pdf-marker-only-warning.md)
+- **Evidence:** [`EVIDENCE-20260824T073244Z-normalization-fixture-matrix`](../EVIDENCE/EVIDENCE-20260824T073244Z-normalization-fixture-matrix.md), [`EVIDENCE-20260824T080248Z-pdf-marker-only-warning`](../EVIDENCE/EVIDENCE-20260824T080248Z-pdf-marker-only-warning.md), and [`EVIDENCE-20260824T083014Z-pdf-marker-warning-review`](../EVIDENCE/EVIDENCE-20260824T083014Z-pdf-marker-warning-review.md)
 - **Milestone:** `NONE`
 
 ## Problem
@@ -85,7 +85,22 @@ NOT APPLICABLE.
 
 - **Required:** `YES` — this defect fix changes externally observable warning behavior.
 
-No independent review round has been recorded. The containing commit, a direct child of published `2f5e1ad`, is the immutable review target; the implementation remains in `REVIEW` for a fresh participant.
+### 2026-08-24T08:30:14Z — agent:claude-code-independent-review
+
+- **Reviewed repository state:** Containing implementation commit `e9c503b4ccc65c0907c554bd1c5fc349d2b2474b`, direct parent `2f5e1ad5a16bd1f1a3c1922575898bc99cd8f0bb`; `HEAD`, `origin/main`, and direct remote `main` all at the reviewed target; tracked tree clean with exactly the four recorded unrelated untracked JavaScript files.
+- **Reviewed target:** `e9c503b4ccc65c0907c554bd1c5fc349d2b2474b`
+- **Open material findings:** `0`
+- **Scope:** Behavioral correctness, focused regression coverage, preservation of extracted text/Markdown/chunks, warning propagation, meaningful-text PDF compatibility, scope containment, and issue/evidence/HANDOFF consistency for the marker-only PDF warning slice.
+- **Commands or procedures:** Read the specification sections, focused issue, implementation evidence, parent issue, and matrix delta before code; read the complete product/test diff; rebuilt the loader and confirmed zero drift between source and committed `dist/`; reran the loader suite (`5 passed in 417ms`), typecheck, the full Python suite (`76 passed in 8.71s`), and the sibling protocol validator; probed the compiled private classifier against eleven edge strings; generated independent image-only and two-page text-native PDFs and verified the compiled CLI and Python adapter end to end; checked scope, digests, remotes, links, HANDOFF structure, and port state. Full detail is in the linked evidence.
+- **Specification compliance:** The change satisfies the slice's §§2.5/4.8 and invariant-13 obligations: evidenced extraction boilerplate no longer suppresses the degradation warning, and the warning contract itself is unchanged.
+- **Correctness and regression findings:** Marker-only output is preserved verbatim in text/Markdown/chunks while gaining the intended warning; meaningful text interleaved with markers remains warning-free; all pre-existing tests pass unmodified; the focused tests cover both directions.
+- **Architecture and complexity findings:** One private predicate reusing the existing warning shape; no new dependency, schema, parser strategy, or cross-module contract.
+- **Material findings and resolution conditions:** `NONE`. Non-material observation: unrecognized near-marker forms (no spaces, decimal numbers, suffixed text) are conservatively treated as meaningful, matching the declared matcher scope; broader boilerplate remains owned by the parent issue.
+- **Limitations:** Synthetic fixtures only; no representative corpus or live OCR; same host class as the implementor; labels are attributable, not authenticated.
+- **Residual risks:** Other recorded silent-degradation cases and parser boilerplate families remain open under the parent normalization/capability issue.
+- **Evidence:** [`EVIDENCE-20260824T083014Z-pdf-marker-warning-review`](../EVIDENCE/EVIDENCE-20260824T083014Z-pdf-marker-warning-review.md)
+- **Disposition:** `APPROVED`
+- **Prior-round resolution:** `FIRST ROUND`
 
 ## Blocker
 
@@ -96,6 +111,7 @@ No independent review round has been recorded. The containing commit, a direct c
 
 ## Residual uncertainty
 
+- Resolved: fresh independent review of `e9c503b` recorded `APPROVED` with zero open material findings at `2026-08-24T08:30:14Z`.
 - Other silent normalization cases in the fixture matrix remain outside this issue and owned by the parent normalization/capability issue.
 - The matcher deliberately recognizes only the evidenced page-marker line family; other parser boilerplate remains unverified.
 
@@ -108,6 +124,7 @@ No independent review round has been recorded. The containing commit, a direct c
 | `2026-08-24T07:57:08Z` | `agent:codex-pdf-marker-warning` | `INVESTIGATING` | `IMPLEMENTING` | Selected the private line classifier and generated fixture tests; no schema, parser, dependency, or non-PDF behavior is in scope. |
 | `2026-08-24T08:01:08Z` | `agent:codex-pdf-marker-warning` | `IMPLEMENTING` | `VERIFYING` | Added the private page-marker classifier, compiled runtime output, and focused image-only/meaningful-PDF assertions. Corrected only an invalid embedded test PNG after the first focused run exposed its zlib error; the corrected focused run passed. |
 | `2026-08-24T08:07:50Z` | `agent:codex-pdf-marker-warning` | `VERIFYING` | `REVIEW` | Focused/full suites, compiled/downstream probes, complete matrix comparison, governance reconciliation, and scope checks passed; implementation awaits fresh independent review. |
+| `2026-08-24T08:30:14Z` | `agent:claude-code-independent-review` | `REVIEW` | `CLOSED` | Fresh independent review of `e9c503b` recorded `APPROVED` with zero open material findings after classifier probes, independent fixture runs, adapter propagation, suites, build parity, and scope checks. |
 
 ## Closure checklist
 
@@ -115,7 +132,7 @@ No independent review round has been recorded. The containing commit, a direct c
 - [x] The change or resolution is recorded.
 - [x] Required verification ran and evidence is linked; unavailable checks remain explicit.
 - [x] If `Review: SELF`, the Self-review outcome is `COMPLETE` and no independent-review risk category applies. (Not applicable.)
-- [ ] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
+- [x] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
 - [x] Required human authority is recorded in the owning artifact: accepted `PROJECT_SPEC.md` authorizes surfacing extraction loss; no new architecture is selected.
 - [x] New complexity is covered, removed, or linked to an explicitly accepted open debt issue.
 - [x] Residual uncertainty is absent or explicitly owned.
