@@ -4,16 +4,16 @@
 
 - **ID:** `ISSUE-20260824T024051Z-quality-gate-validation`
 - **Title:** Make quality-gate score-output validation fail closed
-- **Status:** `REVIEW`
+- **Status:** `CLOSED`
 - **Severity:** `HIGH`
 - **Owner:** `agent:codex-score-validation`
 - **Authority:** `AGENT`
 - **Review:** `INDEPENDENT`
 - **Created UTC:** `2026-08-24T02:40:51Z`
-- **Updated UTC:** `2026-08-24T06:55:10Z`
+- **Updated UTC:** `2026-08-24T07:10:15Z`
 - **Requirements:** [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) §§2.1, 4.2, 8, 11 invariant 3, and §12
 - **ADRs:** `NONE`
-- **Evidence:** [`EVIDENCE-20260824T024051Z-spec-reconciliation`](../EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md), [`EVIDENCE-20260824T064412Z-score-validation`](../EVIDENCE/EVIDENCE-20260824T064412Z-score-validation.md)
+- **Evidence:** [`EVIDENCE-20260824T024051Z-spec-reconciliation`](../EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md), [`EVIDENCE-20260824T064412Z-score-validation`](../EVIDENCE/EVIDENCE-20260824T064412Z-score-validation.md), [`EVIDENCE-20260824T071015Z-score-validation-review`](../EVIDENCE/EVIDENCE-20260824T071015Z-score-validation-review.md)
 - **Milestone:** `NONE`
 
 ## Problem
@@ -89,19 +89,35 @@ NOT APPLICABLE.
 
 - **Required:** `YES` — the eventual change controls candidate acceptance and persisted evaluation evidence.
 
-No review round has been recorded.
+### 2026-08-24T07:10:15Z — agent:claude-code-independent-review
+
+- **Reviewed repository state:** Containing implementation commit `391d73e702bae34ebcdd334d68cdbed27d450fa6`, direct parent `ac93c21881ab3ddedf709a3baaa1703d3d189666`; `origin/main` and direct remote `main` at the reviewed target (refreshed); tracked tree clean with exactly the four recorded unrelated untracked JavaScript files.
+- **Reviewed target:** `391d73e702bae34ebcdd334d68cdbed27d450fa6`
+- **Open material findings:** `0`
+- **Scope:** Behavioral correctness, regression coverage, fail-closed behavior, aggregation semantics, persisted evaluation state, and scope containment of the bounded score-validation slice against the accepted specification and this issue.
+- **Commands or procedures:** Read the specification sections, issue, and implementation evidence before code; read the full `asl/pipeline.py` and test diffs; traced all score-record producers/consumers including `metadata.json` embedding and the two render consumers; reran the full suite (`76 passed in 10.25s`), loader tests and typecheck, sibling validator, structure/link checks, digests, remotes, and listener check; ran eleven independent `_score_metadata()` edge probes beyond the committed tests and an independent end-to-end positive-path pipeline run. Full detail is in the linked evidence.
+- **Specification compliance:** The change satisfies §4.2 and invariant 3 within the slice's authorized bounds: only valid votes participate, and no valid vote means no acceptance.
+- **Correctness and regression findings:** All scoped invalid/fallback cases fail closed with attributable persisted errors; valid-vote aggregation policy, verdict normalization, fallback-candidate rejection, pointer logic, prompts, and routing are unchanged; the entire pre-existing suite passes with zero removed test lines; the positive acceptance path was independently reproduced.
+- **Architecture and complexity findings:** The additive `valid`/`validation_errors` fields and `null` invalid vote fields are the minimal auditable state for the defect; no new dependency, process, or cross-module contract was introduced.
+- **Material findings and resolution conditions:** `NONE`. Non-material observations: the non-dict JSON guard is practically unreachable given the `{`-anchored extraction, and whitespace-suffixed verdicts are rejected rather than stripped; both fail closed.
+- **Limitations:** No live provider calls; `.venv` pytest remains unavailable; same host class as the implementor; labels are attributable, not authenticated.
+- **Residual risks:** Previously persisted score records are not migrated (declared out of scope); the broader configurable §14 policy remains intentionally open.
+- **Evidence:** [`EVIDENCE-20260824T071015Z-score-validation-review`](../EVIDENCE/EVIDENCE-20260824T071015Z-score-validation-review.md)
+- **Disposition:** `APPROVED`
+- **Prior-round resolution:** `FIRST ROUND`
 
 ## Blocker
 
 - **Blocked from:** `NOT BLOCKED`
-- **Blocker:** `NONE`; implementation is complete and awaiting its required independent review.
+- **Blocker:** `NONE`; the issue is closed after independent `APPROVED`.
 - **Unblock owner:** `NONE`
 - **Unblock condition:** `NONE`
 
 ## Residual uncertainty
 
-- Independent review of the containing implementation commit is pending.
-- The broader configurable evaluation policy remains an intentional open design decision.
+- Resolved: independent review of commit `391d73e` recorded `APPROVED` with zero open material findings at `2026-08-24T07:10:15Z`.
+- The broader configurable evaluation policy remains an intentional open design decision under specification §14.
+- Previously persisted score records are not migrated; they predate the additive validity fields, as declared in the rollback note.
 
 ## Activity history
 
@@ -112,6 +128,7 @@ No review round has been recorded.
 | `2026-08-24T06:45:19Z` | `agent:codex-score-validation` | `INVESTIGATING` | `IMPLEMENTING` | Fixed the minimal validation boundary from the existing prompt schema: validate every result, persist invalid records/errors, aggregate eligible votes only, and fail closed when none remain. |
 | `2026-08-24T06:48:17Z` | `agent:codex-score-validation` | `IMPLEMENTING` | `VERIFYING` | Product/test implementation completed; targeted tests now pass, and full regression/governance verification began. |
 | `2026-08-24T06:53:18Z` | `agent:codex-score-validation` | `VERIFYING` | `REVIEW` | Full executable, protocol, persistence, link, integrity, and scope checks passed; immutable containing commit now requires a fresh independent disposition. |
+| `2026-08-24T07:10:15Z` | `agent:claude-code-independent-review` | `REVIEW` | `CLOSED` | Fresh independent review of `391d73e` recorded `APPROVED` with zero open material findings after rerunning the suites and independent edge/positive-path probes; fail-closed behavior, aggregation semantics, persistence, and scope containment verified. |
 
 ## Closure checklist
 
@@ -119,7 +136,7 @@ No review round has been recorded.
 - [x] The change or resolution is recorded.
 - [x] Required verification ran and evidence is linked; unavailable checks remain explicit.
 - [x] If `Review: SELF`, the Self-review outcome is `COMPLETE` and no independent-review risk category applies. (Not applicable.)
-- [ ] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
+- [x] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
 - [x] Required human authority is recorded in the owning artifact: product/contract in `PROJECT_SPEC.md`, architecture in an accepted ADR, or both for a mixed decision.
 - [x] New complexity is covered, removed, or linked to an explicitly accepted open debt issue.
 - [x] Residual uncertainty is absent or explicitly owned.
