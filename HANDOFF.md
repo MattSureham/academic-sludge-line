@@ -6,23 +6,23 @@ Read [`BOOTSTRAP.md`](BOOTSTRAP.md) before using this file. This snapshot is ope
 
 ### Snapshot
 
-- **Snapshot updated UTC:** `2026-08-24T06:25:44Z`
-- **Repository state:** This snapshot belongs to the local, unpushed governance review-closure commit that is a direct child of repair commit `113b8b015e70de7d7f0903d81b9300adeb060811` on `main`; `origin/main` remains at `387bffe632ba2d53c14aa59de93bd645935d9a94`. After the review-closure commit, the only expected dirty entries are four preserved unrelated untracked JavaScript files: `codex-app-server-agent.js`, `codex-feature-definitions.js`, `provider-model.js`, and `provider-registry.js`.
-- **Evidence cutoff:** Product implementation/tests at `387bffe`; governance baseline at `e9ef291` plus repair `113b8b0`; protocol source at `58fa281ee6cb93abc2fea81dd46f8ddef2d8612b`; fresh independent review observations through `2026-08-24T06:25:44Z`.
-- **External checks:** Direct remote `main` refs for both repositories matched their local remote-tracking refs at the `2026-08-24T06:25:44Z` fresh-review capture; refresh before relying on remote currency. No TCP listener was present on port `8765` at that check; refresh before assuming service state.
-- **Stale when:** `HEAD` is not the containing direct child of `113b8b0`; branch/upstream or the four-file dirty set differs; either recorded remote ref moves; newer evidence or authority changes a claim; a background task appears; or higher authority conflicts with this snapshot.
+- **Snapshot updated UTC:** `2026-08-24T06:55:10Z`
+- **Repository state:** This snapshot belongs to the score-validation review-target commit that is a direct child of `ac93c21881ab3ddedf709a3baaa1703d3d189666` on `main` and is authorized for push to `origin/main`. After commit/push, the only expected dirty entries are four preserved unrelated untracked JavaScript files: `codex-app-server-agent.js`, `codex-feature-definitions.js`, `provider-model.js`, and `provider-registry.js`.
+- **Evidence cutoff:** Product implementation/tests at the containing score-validation commit based on `ac93c21`; governance adoption/review through `ac93c21`; protocol source at `58fa281ee6cb93abc2fea81dd46f8ddef2d8612b`; score-validation observations through `2026-08-24T06:55:10Z`.
+- **External checks:** Before the authorized push, direct remote `main` remained `387bffe632ba2d53c14aa59de93bd645935d9a94` at `2026-08-24T06:51:03Z`; refresh and reconcile after push. No TCP listener was present on port `8765` at that check; refresh before assuming service state.
+- **Stale when:** `HEAD` is not the containing direct child of `ac93c21`; the authorized push does not leave `origin/main` at the containing commit; branch/upstream or the four-file dirty set differs; newer evidence or authority changes a claim; a background task appears; or higher authority conflicts with this snapshot.
 - **CONFIRMED — Authority:** [`PROJECT_SPEC.md`](PROJECT_SPEC.md) v0.1 is `ACCEPTED` product intent. [`ADR-20260824T024051Z-protocol-adoption`](ADR/ADR-20260824T024051Z-protocol-adoption.md) is the accepted collision/adoption decision. Code, README history, ignored workspaces, and the archived handoff are implementation evidence, not requirements.
-- **CONFIRMED — Adoption scope:** The original protocol adoption and this repair affect governance/recovery records only. No `PROJECT_SPEC.md` behavioral wording, `asl/`, executable test, generated paper, environment, or unrelated JavaScript file is authorized or changed.
+- **CONFIRMED — Current slice:** The bounded score-validation implementation changes only `asl/pipeline.py`, focused tests, and governance/evidence records. It does not alter accepted-pointer recovery, the scoring policy/aggregation rule for valid votes, reviewer behavior, provider routing, generated papers, environments, or unrelated JavaScript files.
 - **CONFIRMED — Reconciliation:** Implemented requirements include reviewer panel §4.3, revision guidance §4.4, focus/rotation §4.5, role-based bindings §4.9, human-directed iteration §4.13, and local-first §7. Capability-aware execution §4.10 is partial: descriptive preset/catalog capability metadata exists, but stages and execution do not consume it. Additive corrections are in the [reconciliation evidence](EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md) and [independent review](EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md).
-- **CONFIRMED — Critical limitations:** Missing/invalid accepted pointers resolve to latest; malformed scorer output becomes `same` with scores `5`/`5`; evidence “resolution” is character slicing; discovered leads lack explicit verified/candidate state; capability tags do not drive execution. Exact pre-adoption untracked specification bytes/authorship cannot be independently reconstructed, although the current accepted specification and ADR remain authority.
-- **CONFIRMED — Verification baseline:** The fresh independent review rerun passed `66` Python tests in `8.61s`, `4` bundled smart-loader tests in `382ms`, and loader typecheck. Protocol validation, seven byte comparisons, link/HANDOFF structure checks, remote/digest/dirty-state checks, and direct code traces of the pointer/score/capability/reviewer-guidance claims also passed or reproduced their expected observations; `.venv` lacks pytest and unavailable/corrected invocations remain explicit in the [adoption issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) and [fresh review evidence](EVIDENCE/EVIDENCE-20260824T062544Z-fresh-independent-review.md).
-- **UNKNOWN — Completion:** Full compatibility and specification §§10–12 completion are not established. Baseline `e9ef291` received `CHANGES_REQUIRED`; repair commit `113b8b0` received fresh independent `APPROVED` with zero open material findings, and the adoption/recovery issue is `CLOSED`.
+- **CONFIRMED — Critical limitations:** Missing/invalid accepted pointers still resolve to latest; evidence “resolution” remains character slicing; discovered leads lack explicit verified/candidate state; capability tags do not drive execution. Score output now fails closed for malformed, incomplete, schema-invalid, and fallback results, but the containing implementation commit has not yet received independent review. Exact pre-adoption untracked specification bytes/authorship cannot be independently reconstructed, although the current accepted specification and ADR remain authority.
+- **CONFIRMED — Verification baseline:** The final staged-tree run passed `76` Python tests in `7.80s`; `4` bundled smart-loader tests passed in `511ms`, loader typecheck passed, and the sibling protocol validator passed. Targeted score tests passed `11` cases after one recorded test-assertion correction. `.venv` still lacks pytest. Exact commands, before/after observations, persistence checks, and limitations are in [score-validation evidence](EVIDENCE/EVIDENCE-20260824T064412Z-score-validation.md).
+- **UNKNOWN — Completion:** Full compatibility and specification §§10–12 completion are not established. Adoption/recovery is independently approved and closed; score validation is implemented and verified but remains in `REVIEW` pending a fresh independent disposition.
 
 ### Constraints
 
 - Preserve the four unrelated untracked JavaScript files, ignored `papers/`, `.env`, and local environments; do not stage or rewrite them.
 - Do not treat the old handoff, README claims, local generated projects, or current implementation as product authority.
-- The adoption/recovery independent-review gate is satisfied; the score-validation slice may begin within its recorded bounds and still requires independent review before closure.
+- The adoption/recovery independent-review gate is satisfied; the score-validation implementation requires a fresh independent review before its issue can close.
 - Accepted-pointer recovery remains owner-gated and separate from score validation.
 
 ### Unverified complexity
@@ -30,6 +30,7 @@ Read [`BOOTSTRAP.md`](BOOTSTRAP.md) before using this file. This snapshot is ope
 | Cost | Coverage | Residual record |
 |---|---|---|
 | Governance hierarchy and independent-review gate | Protocol validation, byte/link/structure checks, evidence, and Git history | [Adoption/recovery issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) `CLOSED` after fresh independent `APPROVED` |
+| Additive score validity/error state | Unit and integration coverage plus persisted `quality_scores.json`/metadata assertions | [Quality-gate validation](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md) in `REVIEW`; broader configurable policy remains §14 scope |
 | Accepted-state recovery semantics | Isolated reproduction only | [Owner-gated ambiguity](ISSUES/ISSUE-20260824T024051Z-accepted-baseline-ambiguity.md) |
 | Evidence/normalization/capability contracts | Static recovery and narrow existing tests | Focused active issues below; reviewer schema/persona routing is optional future §14 scope, not an active required gap |
 
@@ -42,15 +43,27 @@ No `QUEUED` or `RUNNING` background task has a durable reference. No listener wa
 | Issue | Status | Severity | Owner | Authority | Review | Summary | Evidence or unblock condition |
 |---|---|---|---|---|---|---|---|
 | [Accepted-baseline ambiguity](ISSUES/ISSUE-20260824T024051Z-accepted-baseline-ambiguity.md) | `BLOCKED` | `HIGH` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Missing/invalid pointer silently resolves to latest | Owner must define recovery behavior in the specification; ADR if architectural |
-| [Quality-gate validation](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md) | `OPEN` | `HIGH` | `agent:unassigned` | `AGENT` | `INDEPENDENT` | Malformed score output can count as an accepting vote | First bounded post-review implementation slice |
+| [Quality-gate validation](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md) | `REVIEW` | `HIGH` | `agent:codex-score-validation` | `AGENT` | `INDEPENDENT` | Invalid/fallback votes now fail closed and persist errors; implementation awaits review | Fresh independent review of the containing commit |
 | [Evidence resolution/provenance](ISSUES/ISSUE-20260824T024051Z-evidence-resolution-provenance.md) | `OPEN` | `HIGH` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Character slicing and prompt warnings do not establish semantic resolution or verification state | Owner direction before persistent boundary design |
 | [Normalization/capability coverage](ISSUES/ISSUE-20260824T024051Z-normalization-capability-coverage.md) | `OPEN` | `MEDIUM` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Loader fidelity coverage is narrow; descriptive capability tags exist but execution does not consume them | Gather fixtures first; owner-gate later architecture |
 
 ## Next Action
 
-Implement the bounded fail-closed score-validation slice tracked in [quality-gate validation](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md): add malformed/missing-field/invalid-verdict/invalid-score/fallback judge-output tests, validate each score before aggregation, exclude invalid votes, reject when no valid score remains, and persist validation errors. Keep accepted-pointer recovery out of this slice (owner-gated), and obtain independent review before closing the issue.
+A fresh independent participant must review the containing score-validation commit against the accepted specification, [quality-gate issue](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md), and [implementation evidence](EVIDENCE/EVIDENCE-20260824T064412Z-score-validation.md), rerun the targeted and full checks, and append one complete review round with exactly one disposition; do not begin accepted-pointer recovery or any subsequent refactor during that review.
 
 ## Recent Activity
+
+### 2026-08-24T06:55:10Z — agent:codex-score-validation — bounded-slice implementor
+
+- **Task:** Make malformed, missing, schema-invalid, and fallback scorer output fail closed without changing accepted-pointer or valid-vote policy.
+- **Context inspected:** Accepted specification §§2.1/4.2/8/11/12, adoption ADR/reviews, quality-gate issue and reconciliation evidence, current HANDOFF, score prompt, parser/aggregation/persistence paths, existing quality tests, Git/remotes/dirty state.
+- **Actions performed:** Added strict four-field score validation, explicit `valid`/`validation_errors` persistence, invalid/fallback exclusion, no-valid-vote rejection, and focused unit/integration tests. Created reusable implementation evidence and moved the issue toward independent review.
+- **Files modified:** `asl/pipeline.py`, `tests/test_pipeline.py`, quality-gate issue, score-validation evidence, checkpoint, and this handoff. Accepted-pointer code, specification wording, other product subsystems, ignored artifacts, and unrelated untracked files were not modified.
+- **Findings:** **CONFIRMED** all six pre-change invalid/fallback cases produced eligible-looking metadata. **CONFIRMED** after the change each is ineligible with attributable errors; mixed invalid/fallback favorable votes cannot offset a valid `worse` vote; valid score behavior is preserved.
+- **Verification performed:** Targeted `11 passed`; final full Python `76 passed in 7.80s`; bundled loader `4 passed in 511ms`; loader typecheck and sibling protocol validator passed. `.venv` pytest remains unavailable; one corrected test-assertion failure is recorded in evidence.
+- **Issues created or updated:** [Quality-gate validation](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md) moved `OPEN` → `INVESTIGATING` → `IMPLEMENTING` → `VERIFYING` → `REVIEW`; no independent round has yet been recorded.
+- **Remaining uncertainty:** Independent review is pending; configurable scoring policy remains open §14 scope; accepted-pointer recovery remains owner-gated.
+- **Recommended next action:** Perform only the independent review specified above.
 
 ### 2026-08-24T06:25:44Z — agent:claude-code-independent-review — fresh independent reviewer
 

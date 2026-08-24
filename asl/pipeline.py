@@ -872,11 +872,12 @@ class PaperPipeline:
         fallback = offline_score(manifest, previous_draft, candidate_draft)
         results = _generate_all(self.client, prompt, fallback, role="score")
         scores = [_score_metadata(result) for result in results]
-        if not any(not _is_fallback_result(score) for score in scores):
+        valid_scores = [score for score in scores if score["valid"]]
+        if not valid_scores:
             gate = {
                 "accepted": False,
                 "decision": "rejected",
-                "reason": "no configured scoring model completed; preserving previous accepted draft",
+                "reason": "no valid scoring model result completed; preserving previous accepted draft",
                 "previous_version": previous_dir.name if previous_dir else None,
                 "candidate_model": candidate_model,
                 "scores": scores,
@@ -884,8 +885,8 @@ class PaperPipeline:
             write_json(version_dir / "quality_scores.json", gate)
             return gate
 
-        better_or_same = sum(1 for score in scores if score["verdict"] in {"better", "same"})
-        worse = sum(1 for score in scores if score["verdict"] == "worse")
+        better_or_same = sum(1 for score in valid_scores if score["verdict"] in {"better", "same"})
+        worse = sum(1 for score in valid_scores if score["verdict"] == "worse")
         accepted = better_or_same >= worse
         decision = "accepted" if accepted else "rejected"
         gate = {
@@ -1039,41 +1040,79 @@ def _is_fallback_result(result: dict[str, object]) -> bool:
 
 
 def _score_metadata(result: object) -> dict[str, object]:
+    result_metadata = _result_metadata(result)
     parsed = _parse_score_json(getattr(result, "text", ""))
+    if _is_fallback_result(result_metadata):
+        parsed = {
+            "valid": False,
+            "verdict": None,
+            "previous_score": None,
+            "candidate_score": None,
+            "rationale": None,
+            "validation_errors": [
+                *parsed["validation_errors"],
+                "fallback scorer output is not eligible for quality-gate voting",
+            ],
+        }
     return {
-        **_result_metadata(result),
-        "verdict": parsed.get("verdict", "same"),
-        "previous_score": parsed.get("previous_score", 5),
-        "candidate_score": parsed.get("candidate_score", 5),
-        "rationale": parsed.get("rationale", ""),
+        **result_metadata,
+        **parsed,
     }
 
 
 def _parse_score_json(text: str) -> dict[str, object]:
     match = re.search(r"\{.*?\}", text, flags=re.DOTALL)
     if not match:
-        return {}
+        return _invalid_score(["score output does not contain a JSON object"])
     try:
         parsed = json.loads(match.group(0))
     except json.JSONDecodeError:
-        return {}
-    verdict = str(parsed.get("verdict", "same")).lower()
-    if verdict not in {"better", "same", "worse"}:
-        verdict = "same"
+        return _invalid_score(["score output contains malformed JSON"])
+    if not isinstance(parsed, dict):
+        return _invalid_score(["score output JSON must be an object"])
+
+    required_fields = ("verdict", "previous_score", "candidate_score", "rationale")
+    errors = [f"missing required field: {field}" for field in required_fields if field not in parsed]
+
+    verdict_value = parsed.get("verdict")
+    verdict = verdict_value.lower() if isinstance(verdict_value, str) else None
+    if "verdict" in parsed and verdict not in {"better", "same", "worse"}:
+        errors.append("verdict must be one of: better, same, worse")
+
+    score_values: dict[str, int | None] = {}
+    for field in ("previous_score", "candidate_score"):
+        value = parsed.get(field)
+        if field in parsed and (type(value) is not int or not 1 <= value <= 10):
+            errors.append(f"{field} must be an integer from 1 to 10")
+            score_values[field] = None
+        else:
+            score_values[field] = value if type(value) is int else None
+
+    rationale = parsed.get("rationale")
+    if "rationale" in parsed and (not isinstance(rationale, str) or not rationale.strip()):
+        errors.append("rationale must be a non-empty string")
+
+    if errors:
+        return _invalid_score(errors)
     return {
+        "valid": True,
         "verdict": verdict,
-        "previous_score": _bounded_score(parsed.get("previous_score", 5)),
-        "candidate_score": _bounded_score(parsed.get("candidate_score", 5)),
-        "rationale": str(parsed.get("rationale", "")),
+        "previous_score": score_values["previous_score"],
+        "candidate_score": score_values["candidate_score"],
+        "rationale": rationale,
+        "validation_errors": [],
     }
 
 
-def _bounded_score(value: object) -> int:
-    try:
-        score = int(value)
-    except (TypeError, ValueError):
-        score = 5
-    return max(1, min(10, score))
+def _invalid_score(errors: list[str]) -> dict[str, object]:
+    return {
+        "valid": False,
+        "verdict": None,
+        "previous_score": None,
+        "candidate_score": None,
+        "rationale": None,
+        "validation_errors": errors,
+    }
 
 
 def _extract_prefixed_line(text: str, prefix: str) -> str | None:

@@ -1578,6 +1578,175 @@ def test_missing_score_model_does_not_replace_previous_accepted(tmp_path: Path) 
     assert metadata["models"]["used"]["score"][0]["provider"] == "offline"
 
 
+@pytest.mark.parametrize(
+    ("result", "error_fragment"),
+    [
+        pytest.param(
+            LLMResult(text="not JSON", provider="fake", model="judge"),
+            "does not contain a JSON object",
+            id="malformed",
+        ),
+        pytest.param(
+            LLMResult(
+                text='{"verdict":"better","previous_score":5,"candidate_score":7}',
+                provider="fake",
+                model="judge",
+            ),
+            "missing required field: rationale",
+            id="missing-field",
+        ),
+        pytest.param(
+            LLMResult(
+                text='{"verdict":"neutral","previous_score":5,"candidate_score":5,"rationale":"Tie."}',
+                provider="fake",
+                model="judge",
+            ),
+            "verdict must be one of",
+            id="invalid-verdict",
+        ),
+        pytest.param(
+            LLMResult(
+                text='{"verdict":"better","previous_score":"5","candidate_score":7,"rationale":"Better."}',
+                provider="fake",
+                model="judge",
+            ),
+            "previous_score must be an integer",
+            id="invalid-score-type",
+        ),
+        pytest.param(
+            LLMResult(
+                text='{"verdict":"better","previous_score":5,"candidate_score":11,"rationale":"Better."}',
+                provider="fake",
+                model="judge",
+            ),
+            "candidate_score must be an integer",
+            id="invalid-score-range",
+        ),
+        pytest.param(
+            LLMResult(
+                text='{"verdict":"better","previous_score":5,"candidate_score":7,"rationale":"Better."}',
+                provider="offline",
+                model="template",
+            ),
+            "fallback scorer output is not eligible",
+            id="fallback",
+        ),
+    ],
+)
+def test_score_metadata_rejects_invalid_or_fallback_results(
+    result: LLMResult,
+    error_fragment: str,
+) -> None:
+    from asl.pipeline import _score_metadata
+
+    score = _score_metadata(result)
+
+    assert score["valid"] is False
+    assert score["verdict"] is None
+    assert score["previous_score"] is None
+    assert score["candidate_score"] is None
+    assert score["rationale"] is None
+    assert any(error_fragment in error for error in score["validation_errors"])
+
+
+def test_score_metadata_preserves_valid_score_behavior() -> None:
+    from asl.pipeline import _score_metadata
+
+    score = _score_metadata(
+        LLMResult(
+            text='Result: {"verdict":"BETTER","previous_score":5,"candidate_score":7,"rationale":"More complete."}',
+            provider="fake",
+            model="judge",
+        )
+    )
+
+    assert score["valid"] is True
+    assert score["verdict"] == "better"
+    assert score["previous_score"] == 5
+    assert score["candidate_score"] == 7
+    assert score["rationale"] == "More complete."
+    assert score["validation_errors"] == []
+
+
+def test_malformed_score_is_persisted_and_fails_closed(tmp_path: Path) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug="invalid-score-gate",
+        title="Invalid Score Gate",
+        topic="score validation",
+        brief="Preserve accepted drafts.",
+    )
+    first = PaperPipeline(project, client=LLMClient(offline=True)).run()[0]
+    invalid = LLMResult(text="not JSON", provider="fake", model="broken-judge")
+
+    second = PaperPipeline(project, client=_ScoreResultsClient((invalid,))).run()[0]
+
+    assert (project / "accepted_version.txt").read_text(encoding="utf-8").strip() == first.name
+    persisted_gate = read_json(second / "quality_scores.json")
+    metadata_gate = read_json(second / "metadata.json")["quality_gate"]
+    assert persisted_gate == metadata_gate
+    assert persisted_gate["accepted"] is False
+    assert persisted_gate["decision"] == "rejected"
+    assert "no valid scoring model" in persisted_gate["reason"]
+    assert persisted_gate["scores"][0]["valid"] is False
+    assert any(
+        "does not contain a JSON object" in error
+        for error in persisted_gate["scores"][0]["validation_errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("ignored_result", "error_fragment"),
+    [
+        pytest.param(
+            LLMResult(text="not JSON", provider="fake", model="broken-judge"),
+            "does not contain a JSON object",
+            id="invalid",
+        ),
+        pytest.param(
+            LLMResult(
+                text='{"verdict":"better","previous_score":3,"candidate_score":9,"rationale":"Fallback vote."}',
+                provider="offline-after-error",
+                model="template",
+            ),
+            "fallback scorer output is not eligible",
+            id="fallback",
+        ),
+    ],
+)
+def test_invalid_or_fallback_votes_are_excluded_from_aggregation(
+    tmp_path: Path,
+    ignored_result: LLMResult,
+    error_fragment: str,
+) -> None:
+    project = init_project(
+        root=tmp_path,
+        slug=f"excluded-{ignored_result.provider}",
+        title="Excluded Score Vote",
+        topic="score validation",
+        brief="Preserve accepted drafts.",
+    )
+    first = PaperPipeline(project, client=LLMClient(offline=True)).run()[0]
+    valid_worse = LLMResult(
+        text='{"verdict":"worse","previous_score":8,"candidate_score":2,"rationale":"Less complete."}',
+        provider="fake",
+        model="valid-judge",
+    )
+
+    second = PaperPipeline(
+        project,
+        client=_ScoreResultsClient((ignored_result, valid_worse)),
+    ).run()[0]
+
+    assert (project / "accepted_version.txt").read_text(encoding="utf-8").strip() == first.name
+    gate = read_json(second / "quality_scores.json")
+    assert gate["decision"] == "rejected"
+    assert gate["scores"][0]["valid"] is False
+    assert any(error_fragment in error for error in gate["scores"][0]["validation_errors"])
+    assert gate["scores"][1]["valid"] is True
+    assert gate["scores"][1]["verdict"] == "worse"
+
+
 def test_empty_brief_can_run_offline(tmp_path: Path) -> None:
     project = init_project(
         root=tmp_path,
@@ -1813,4 +1982,25 @@ class _MissingScoreClient:
                     attempts=("missing:score: missing credentials or endpoint",),
                 )
             ]
+        return [self.generate(prompt, fallback, role=role)]
+
+
+class _ScoreResultsClient:
+    def __init__(self, score_results: tuple[LLMResult, ...]) -> None:
+        self.score_results = score_results
+
+    def with_model_routes(self, routes: dict[str, str]) -> "_ScoreResultsClient":
+        return self
+
+    def route_metadata(self) -> dict[str, list[str]]:
+        return {"draft": ["fake:writer"], "score": ["fake:judges"]}
+
+    def generate(self, prompt: str, fallback: str, role: str = "default") -> LLMResult:
+        if role == "draft":
+            return LLMResult(text="# Candidate\n\nA real candidate.", provider="fake", model="writer")
+        return LLMResult(text=fallback, provider="fake", model=f"{role}-fallback")
+
+    def generate_all(self, prompt: str, fallback: str, role: str) -> list[LLMResult]:
+        if role == "score":
+            return list(self.score_results)
         return [self.generate(prompt, fallback, role=role)]
