@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { PDFParse } from "pdf-parse";
 import { assetDirForFile, findExecutable, mimeTypeForImageExtension, runFile, stableId } from "../utils.js";
+const PDF_PAGE_MARKER = /^--\s+\d+\s+of\s+\d+\s+--$/;
 export const loadPdf = async (filePath, context) => {
     const buffer = await fs.readFile(filePath);
     const warnings = [];
@@ -24,7 +25,7 @@ export const loadPdf = async (filePath, context) => {
     const text = normalizePdfText(textResult.text);
     const info = infoResult?.info;
     const title = typeof info?.Title === "string" ? info.Title : path.basename(filePath);
-    if (!text.trim()) {
+    if (!hasMeaningfulPdfText(text)) {
         warnings.push("No extractable PDF text was found. The PDF may be scanned or image-heavy.");
     }
     if (context.options.pdf.renderPages) {
@@ -57,6 +58,12 @@ function normalizePdfText(text) {
         .replace(/\r\n/g, "\n")
         .replace(/\n{4,}/g, "\n\n\n")
         .trim();
+}
+function hasMeaningfulPdfText(text) {
+    return text.split("\n").some((line) => {
+        const trimmed = line.trim();
+        return Boolean(trimmed) && !PDF_PAGE_MARKER.test(trimmed);
+    });
 }
 async function renderPdfPages(filePath, context) {
     const executable = await findExecutable(["pdftoppm"]);

@@ -6,6 +6,12 @@ import PDFDocument from "pdfkit";
 import { describe, expect, it } from "vitest";
 import { loadPath, splitText } from "../src/index.js";
 
+const NO_EXTRACTABLE_PDF_TEXT_WARNING = "No extractable PDF text was found. The PDF may be scanned or image-heavy.";
+const ONE_PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64"
+);
+
 describe("smart-loader", () => {
   it("loads text-native files from a folder", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "smart-loader-test-"));
@@ -41,6 +47,23 @@ describe("smart-loader", () => {
     expect(result.errors).toEqual([]);
     expect(document?.format).toBe("pdf");
     expect(document?.text).toContain("Hello from a generated PDF.");
+    expect(document?.warnings).not.toContain(NO_EXTRACTABLE_PDF_TEXT_WARNING);
+  });
+
+  it("warns when PDF extraction contains only page markers", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "smart-loader-image-pdf-test-"));
+    await writeImageOnlyPdf(path.join(dir, "scan.pdf"));
+
+    const result = await loadPath(dir, { chunkSize: 1000, chunkOverlap: 100 });
+    const document = result.documents.find((doc) => doc.relativePath === "scan.pdf");
+
+    expect(result.errors).toEqual([]);
+    expect(result.summary.loadedFiles).toBe(1);
+    expect(document?.format).toBe("pdf");
+    expect(document?.text).toMatch(/^--\s+1\s+of\s+1\s+--$/);
+    expect(document?.warnings).toContain(NO_EXTRACTABLE_PDF_TEXT_WARNING);
+    expect(document?.markdown).toContain("-- 1 of 1 --");
+    expect(document?.chunks).toHaveLength(1);
   });
 
   it("discovers CAJ files and falls back to outline metadata", async () => {
@@ -80,6 +103,15 @@ async function writePdf(filePath: string, text: string): Promise<void> {
   const stream = createWriteStream(filePath);
   document.pipe(stream);
   document.text(text);
+  document.end();
+  await once(stream, "finish");
+}
+
+async function writeImageOnlyPdf(filePath: string): Promise<void> {
+  const document = new PDFDocument();
+  const stream = createWriteStream(filePath);
+  document.pipe(stream);
+  document.image(ONE_PIXEL_PNG, 72, 72, { width: 32 });
   document.end();
   await once(stream, "finish");
 }
