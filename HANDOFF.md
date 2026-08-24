@@ -6,23 +6,23 @@ Read [`BOOTSTRAP.md`](BOOTSTRAP.md) before using this file. This snapshot is ope
 
 ### Snapshot
 
-- **Snapshot updated UTC:** `2026-08-24T02:59:54Z`
-- **Repository state:** This snapshot belongs to the local, unpushed governance commit that is a direct child of `387bffe632ba2d53c14aa59de93bd645935d9a94` on `main`; `origin/main` remains at `387bffe`. After that commit, the only expected dirty entries are four preserved unrelated untracked JavaScript files: `codex-app-server-agent.js`, `codex-feature-definitions.js`, `provider-model.js`, and `provider-registry.js`.
-- **Evidence cutoff:** Product implementation/tests at `387bffe`; protocol source at `58fa281ee6cb93abc2fea81dd46f8ddef2d8612b`; recovery observations captured from `2026-08-24T02:40:51Z` through `2026-08-24T02:59:54Z`.
-- **External checks:** Direct remote `main` refs for both repositories matched their local remote-tracking refs at `2026-08-24T02:59:54Z`; refresh before relying on remote currency. No TCP listener was present on port `8765` at the earlier recovery check; refresh before assuming service state.
-- **Stale when:** `HEAD` is not the containing direct child of `387bffe`; branch/upstream or the four-file dirty set differs; either recorded remote ref moves; newer evidence or authority changes a claim; a background task appears; or higher authority conflicts with this snapshot.
+- **Snapshot updated UTC:** `2026-08-24T03:46:47Z`
+- **Repository state:** This snapshot belongs to the local, unpushed governance-repair commit that is a direct child of candidate baseline `e9ef291a0be124a1ea1ad782c6bb307a486f2b18` on `main`; `origin/main` remains at `387bffe632ba2d53c14aa59de93bd645935d9a94`. After the repair commit, the only expected dirty entries are four preserved unrelated untracked JavaScript files: `codex-app-server-agent.js`, `codex-feature-definitions.js`, `provider-model.js`, and `provider-registry.js`.
+- **Evidence cutoff:** Product implementation/tests at `387bffe`; candidate governance baseline at `e9ef291`; protocol source at `58fa281ee6cb93abc2fea81dd46f8ddef2d8612b`; independent review and governance-repair observations through `2026-08-24T03:46:47Z`.
+- **External checks:** Direct remote `main` refs for both repositories matched their local remote-tracking refs at the `2026-08-24T03:44:24Z` repair-verification capture; refresh before relying on remote currency. No TCP listener was present on port `8765` at that check; refresh before assuming service state.
+- **Stale when:** `HEAD` is not the containing direct child of `e9ef291`; branch/upstream or the four-file dirty set differs; either recorded remote ref moves; newer evidence or authority changes a claim; a background task appears; or higher authority conflicts with this snapshot.
 - **CONFIRMED — Authority:** [`PROJECT_SPEC.md`](PROJECT_SPEC.md) v0.1 is `ACCEPTED` product intent. [`ADR-20260824T024051Z-protocol-adoption`](ADR/ADR-20260824T024051Z-protocol-adoption.md) is the accepted collision/adoption decision. Code, README history, ignored workspaces, and the archived handoff are implementation evidence, not requirements.
-- **CONFIRMED — Adoption scope:** Protocol entry/navigation/templates, governance records, the specification acceptance metadata, checkpoint, and this handoff are the only intended changes. No `asl/` or test behavior is authorized or changed.
-- **CONFIRMED — Reconciliation:** Implemented requirements are reviewer panel §4.3, focus/rotation §4.5, role-based bindings §4.9, human-directed iteration §4.13, and local-first §7. Partial, absent, and unknown classifications are in the [reconciliation evidence](EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md).
-- **CONFIRMED — Critical limitations:** Missing/invalid accepted pointers resolve to latest; malformed scorer output becomes `same` with scores `5`/`5`; evidence “resolution” is character slicing; discovered leads lack explicit verified/candidate state; general capability-aware execution is absent.
-- **CONFIRMED — Verification baseline:** Final reruns passed `66` Python tests in `7.48s`, `4` bundled smart-loader tests in `491ms`, and loader typecheck. The protocol source validator, seven byte comparisons, target manifest/symlink checks, and target Markdown/link/HANDOFF validation also passed. `.venv` lacks pytest; corrected failed invocations are preserved in [recovery evidence](EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md).
-- **UNKNOWN — Completion:** Full compatibility and specification §§10–12 completion are not established. Independent review of the containing governance commit is pending.
+- **CONFIRMED — Adoption scope:** The original protocol adoption and this repair affect governance/recovery records only. No `PROJECT_SPEC.md` behavioral wording, `asl/`, executable test, generated paper, environment, or unrelated JavaScript file is authorized or changed.
+- **CONFIRMED — Reconciliation:** Implemented requirements include reviewer panel §4.3, revision guidance §4.4, focus/rotation §4.5, role-based bindings §4.9, human-directed iteration §4.13, and local-first §7. Capability-aware execution §4.10 is partial: descriptive preset/catalog capability metadata exists, but stages and execution do not consume it. Additive corrections are in the [reconciliation evidence](EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md) and [independent review](EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md).
+- **CONFIRMED — Critical limitations:** Missing/invalid accepted pointers resolve to latest; malformed scorer output becomes `same` with scores `5`/`5`; evidence “resolution” is character slicing; discovered leads lack explicit verified/candidate state; capability tags do not drive execution. Exact pre-adoption untracked specification bytes/authorship cannot be independently reconstructed, although the current accepted specification and ADR remain authority.
+- **CONFIRMED — Verification baseline:** The governance-repair rerun passed `66` Python tests in `7.55s`, `4` bundled smart-loader tests in `376ms`, and loader typecheck. Protocol validation, seven byte comparisons, manifest/symlink/link/HANDOFF checks, remote/digest/dirty-state checks, and pointer/score/capability/reviewer-guidance diagnostics also passed or reproduced their expected observations; `.venv` lacks pytest and corrected/unavailable invocations remain explicit in the [adoption issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) and [independent-review evidence](EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md).
+- **UNKNOWN — Completion:** Full compatibility and specification §§10–12 completion are not established. Baseline `e9ef291` received `CHANGES_REQUIRED`; the containing governance-repair commit still requires a fresh independent review.
 
 ### Constraints
 
 - Preserve the four unrelated untracked JavaScript files, ignored `papers/`, `.env`, and local environments; do not stage or rewrite them.
 - Do not treat the old handoff, README claims, local generated projects, or current implementation as product authority.
-- Do not start the post-review refactor until a fresh independent participant records `APPROVED` on the adoption issue with no unresolved material finding.
+- Do not start the score-validation slice until a fresh independent participant reviews the containing governance-repair commit and records `APPROVED` on the adoption issue with zero open material findings.
 - Accepted-pointer recovery remains owner-gated and separate from score validation.
 
 ### Unverified complexity
@@ -31,7 +31,7 @@ Read [`BOOTSTRAP.md`](BOOTSTRAP.md) before using this file. This snapshot is ope
 |---|---|---|
 | Governance hierarchy and independent-review gate | Protocol validation, byte/link/structure checks, evidence, and Git history | [Adoption/recovery issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) in `REVIEW` after verification |
 | Accepted-state recovery semantics | Isolated reproduction only | [Owner-gated ambiguity](ISSUES/ISSUE-20260824T024051Z-accepted-baseline-ambiguity.md) |
-| Reviewer/evidence/normalization/capability contracts | Static recovery and narrow existing tests | Focused active issues below |
+| Evidence/normalization/capability contracts | Static recovery and narrow existing tests | Focused active issues below; reviewer schema/persona routing is optional future §14 scope, not an active required gap |
 
 ### Background tasks
 
@@ -41,18 +41,29 @@ No `QUEUED` or `RUNNING` background task has a durable reference. No listener wa
 
 | Issue | Status | Severity | Owner | Authority | Review | Summary | Evidence or unblock condition |
 |---|---|---|---|---|---|---|---|
-| [Protocol adoption/recovery](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) | `REVIEW` | `HIGH` | `agent:codex-recovery` | `HUMAN` | `INDEPENDENT` | Governance baseline verified; adoption remains open | Fresh independent review of containing commit |
+| [Protocol adoption/recovery](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) | `REVIEW` | `HIGH` | `agent:codex-recovery` | `HUMAN` | `INDEPENDENT` | `e9ef291` received three material findings; governance-only repairs are in the containing commit | Fresh independent review of containing repair commit |
 | [Accepted-baseline ambiguity](ISSUES/ISSUE-20260824T024051Z-accepted-baseline-ambiguity.md) | `BLOCKED` | `HIGH` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Missing/invalid pointer silently resolves to latest | Owner must define recovery behavior in the specification; ADR if architectural |
 | [Quality-gate validation](ISSUES/ISSUE-20260824T024051Z-quality-gate-validation.md) | `OPEN` | `HIGH` | `agent:unassigned` | `AGENT` | `INDEPENDENT` | Malformed score output can count as an accepting vote | First bounded post-review implementation slice |
-| [Reviewer routing/guidance](ISSUES/ISSUE-20260824T024051Z-review-routing-guidance.md) | `OPEN` | `MEDIUM` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Reviewer personas share one route and guidance is mostly unstructured prose | Owner direction before contract changes |
 | [Evidence resolution/provenance](ISSUES/ISSUE-20260824T024051Z-evidence-resolution-provenance.md) | `OPEN` | `HIGH` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Character slicing and prompt warnings do not establish semantic resolution or verification state | Owner direction before persistent boundary design |
-| [Normalization/capability coverage](ISSUES/ISSUE-20260824T024051Z-normalization-capability-coverage.md) | `OPEN` | `MEDIUM` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Loader fidelity coverage is narrow; capability-aware execution is absent | Gather fixtures first; owner-gate later architecture |
+| [Normalization/capability coverage](ISSUES/ISSUE-20260824T024051Z-normalization-capability-coverage.md) | `OPEN` | `MEDIUM` | `human:technical-owner` | `HUMAN` | `INDEPENDENT` | Loader fidelity coverage is narrow; descriptive capability tags exist but execution does not consume them | Gather fixtures first; owner-gate later architecture |
 
 ## Next Action
 
-A fresh independent participant must inspect the containing governance commit against [`BOOTSTRAP.md`](BOOTSTRAP.md), the accepted [adoption ADR](ADR/ADR-20260824T024051Z-protocol-adoption.md), and both evidence records, rerun proportionate structural checks, then append one complete review round with exactly one disposition to the [adoption/recovery issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md); do not begin the score-validation refactor during that review.
+A fresh independent participant must review the containing governance-repair commit against [`BOOTSTRAP.md`](BOOTSTRAP.md), the accepted [adoption ADR](ADR/ADR-20260824T024051Z-protocol-adoption.md), all three evidence records, and the three `R1`–`R3` resolution conditions; rerun proportionate structural/scope checks and append one complete round with exactly one disposition to the [adoption/recovery issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md). Do not begin the score-validation slice during that review.
 
 ## Recent Activity
+
+### 2026-08-24T03:46:47Z — agent:codex-governance-review — independent reviewer and governance-repair implementor
+
+- **Task:** Independently assess candidate baseline `e9ef291`, record its disposition, and repair only authorized governance/recovery artifacts.
+- **Context inspected:** Accepted specification and ADR, sibling protocol at `58fa281`, the entire adoption diff, evidence/issues/checkpoint/handoff, relevant prompts/routes/pipeline/tests, Git history/objects/remotes, ignored workspace metadata, and the preserved dirty set.
+- **Actions performed:** Recorded `CHANGES_REQUIRED` with three material findings; corrected §4.4 to implemented and §4.10 to partial; qualified unreproducible pre-adoption provenance; closed reviewer-routing/guidance as no current required gap; reconciled current-state records. No product scope or §14 architecture was selected.
+- **Files modified:** Governance/recovery paths only. `PROJECT_SPEC.md` behavioral wording, runtime/product code, tests, generated papers, environments, and the four unrelated untracked JavaScript files were not modified.
+- **Findings:** Protocol adoption, tracked legacy preservation, and dirty-state preservation were sound. The baseline underclassified review guidance, omitted descriptive capability metadata, and overstated independent historical provenance.
+- **Verification performed:** Full repair verification is recorded in the [adoption/recovery issue](ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) and [independent review evidence](EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md), including explicit unavailable/corrected invocations.
+- **Issues created or updated:** Adoption/recovery remains `REVIEW`; reviewer routing/guidance is `CLOSED`; normalization/capability coverage is corrected and remains `OPEN`.
+- **Remaining uncertainty:** The same participant reviewed `e9ef291` and applied its governance corrections, so the repair commit is not independently approved. Exact original untracked specification bytes/authorship remain unrecoverable.
+- **Recommended next action:** Perform the single fresh independent re-review described above; do not start score validation.
 
 ### 2026-08-24T02:59:54Z — agent:codex-recovery — first-adoption implementor
 
@@ -68,4 +79,4 @@ A fresh independent participant must inspect the containing governance commit ag
 
 ## Archived Summary
 
-The pre-protocol handoff is preserved immutably at Git object `387bffe:HANDOFF.md` with SHA-256 `43200c484281fcb25dd8a128096a21ee05d87d4200a95f29a342bd137c5c2ede`. It described a long implementation history including versioned drafting, quality gating, reviewer iteration, reference focus/rotation, smart-loader integration, role/provider routes, research stages, UI work, and CAJ/RTF support. Verified behavior was carried into [recovery evidence](EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md) and [reconciliation evidence](EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md); unverified claims and implementation choices were not converted into product requirements. Git history remains the source for detailed historical commits.
+The pre-protocol handoff is preserved immutably at Git object `387bffe:HANDOFF.md` with SHA-256 `43200c484281fcb25dd8a128096a21ee05d87d4200a95f29a342bd137c5c2ede`. It described a long implementation history including versioned drafting, quality gating, reviewer iteration, reference focus/rotation, smart-loader integration, role/provider routes, research stages, UI work, and CAJ/RTF support. Verified behavior was carried into [recovery evidence](EVIDENCE/EVIDENCE-20260824T024051Z-repository-recovery.md) and [reconciliation evidence](EVIDENCE/EVIDENCE-20260824T024051Z-spec-reconciliation.md); unverified claims and implementation choices were not converted into product requirements. The review-routing/guidance issue was later closed because current mandatory behavior is implemented; richer schemas and persona routes remain optional future §14 scope. Git history remains the source for detailed historical commits.

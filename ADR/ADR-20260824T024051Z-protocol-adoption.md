@@ -96,6 +96,12 @@ The protocol source is the clean, remote-current sibling repository `../agentic-
 
 No independent review round has been recorded. The adoption issue remains in `REVIEW`; a fresh participant must inspect the containing commit directly.
 
+### Review clarification — 2026-08-24T03:31:59Z
+
+The statement above records the adoption implementor's original handoff state and is preserved as history. A first independent round has since reviewed immutable target `e9ef291a0be124a1ea1ad782c6bb307a486f2b18` and returned `CHANGES_REQUIRED` with three material governance findings: §4.4 was underclassified, §4.10 omitted existing descriptive capability metadata, and exact pre-adoption specification provenance was overclaimed.
+
+Those findings do not invalidate this ADR's accepted protocol mapping or the current specification's authority. They authorize additive governance/recovery corrections only; they select no new product behavior or architecture. The containing repair commit must receive a fresh independent review before the adoption issue can close. The complete round and resolution conditions are recorded in the [adoption/recovery issue](../ISSUES/ISSUE-20260824T024051Z-protocol-adoption-recovery.md) and [independent review evidence](../EVIDENCE/EVIDENCE-20260824T033159Z-governance-independent-review.md).
+
 ## Status history
 
 | UTC time | From | To | Actor | Reason and authority evidence |
