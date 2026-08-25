@@ -1,3 +1,5 @@
+import { isUtf8 } from "node:buffer";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse as parseCsv } from "csv-parse/sync";
 import TurndownService from "turndown";
@@ -11,10 +13,19 @@ export const loadMarkdown = async (filePath) => {
     };
 };
 export const loadText = async (filePath) => {
-    const text = stripControlCharacters(await readUtf8(filePath));
+    const buffer = await fs.readFile(filePath);
+    const warnings = [];
+    if (!isUtf8(buffer)) {
+        warnings.push("Invalid UTF-8 byte sequences were replaced during text decoding.");
+    }
+    if (buffer.includes(0)) {
+        warnings.push("NUL bytes were removed during text normalization.");
+    }
+    const text = stripControlCharacters(new TextDecoder("utf-8", { fatal: false }).decode(buffer));
     return {
         text,
         markdown: text,
+        warnings,
         loader: "text"
     };
 };

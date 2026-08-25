@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import { loadPath, splitText } from "../src/index.js";
 
 const NO_EXTRACTABLE_PDF_TEXT_WARNING = "No extractable PDF text was found. The PDF may be scanned or image-heavy.";
+const INVALID_UTF8_WARNING = "Invalid UTF-8 byte sequences were replaced during text decoding.";
+const NUL_REMOVAL_WARNING = "NUL bytes were removed during text normalization.";
 const ONE_PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64"
@@ -27,6 +29,46 @@ describe("smart-loader", () => {
     expect(result.documents.map((doc) => doc.relativePath).sort()).toEqual(["data.json", "note.md", "table.csv"]);
     expect(result.chunks.length).toBe(3);
     expect(result.documents.find((doc) => doc.relativePath === "table.csv")?.markdown).toContain("| name | score |");
+  });
+
+  it("warns about invalid UTF-8 replacement and NUL removal without rewriting normalized text", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "smart-loader-invalid-text-test-"));
+    const filePath = path.join(dir, "invalid-utf8.txt");
+    await fs.writeFile(
+      filePath,
+      Buffer.concat([
+        Buffer.from("INVALID_UTF8_LEFT", "utf8"),
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from("INVALID_UTF8_RIGHT\nCONTROL_LEFT\0CONTROL_RIGHT\n", "utf8")
+      ])
+    );
+
+    const result = await loadPath(filePath, { chunkSize: 1000, chunkOverlap: 100 });
+    const document = result.documents[0];
+    const expectedText = "INVALID_UTF8_LEFT��INVALID_UTF8_RIGHT\nCONTROL_LEFTCONTROL_RIGHT\n";
+
+    expect(result.errors).toEqual([]);
+    expect(result.summary.loadedFiles).toBe(1);
+    expect(document.text).toBe(expectedText);
+    expect(document.markdown).toBe(expectedText);
+    expect(document.chunks.map((chunk) => chunk.text)).toEqual([expectedText.trim()]);
+    expect(document.warnings).toEqual([INVALID_UTF8_WARNING, NUL_REMOVAL_WARNING]);
+  });
+
+  it("keeps valid UTF-8 text warning-free, including an encoded replacement character", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "smart-loader-valid-text-test-"));
+    const filePath = path.join(dir, "valid-utf8.txt");
+    const sourceText = "Valid UTF-8: café, 研究, and �.\n";
+    await fs.writeFile(filePath, sourceText, "utf8");
+
+    const result = await loadPath(filePath, { chunkSize: 1000, chunkOverlap: 100 });
+    const document = result.documents[0];
+
+    expect(result.errors).toEqual([]);
+    expect(document.text).toBe(sourceText);
+    expect(document.markdown).toBe(sourceText);
+    expect(document.chunks.map((chunk) => chunk.text)).toEqual([sourceText.trim()]);
+    expect(document.warnings).toEqual([]);
   });
 
   it("splits long text with overlap", () => {
