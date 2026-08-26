@@ -50,7 +50,7 @@ program
             process.stdout.write("\n");
         }
     }
-    if (cliOptions.failOnError && result.errors.length > 0) {
+    if (cliOptions.failOnError && result.summary.failedFiles > 0) {
         process.exitCode = 1;
     }
 });

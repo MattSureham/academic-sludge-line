@@ -19,6 +19,11 @@ export type * from "./types.js";
 export { SUPPORTED_EXTENSIONS };
 export { splitText } from "./chunk.js";
 
+interface DirectoryScanResult {
+  files: string[];
+  skippedErrors: LoadError[];
+}
+
 export async function loadPath(inputPath: string, options: SmartLoaderOptions = {}): Promise<LoadResult> {
   const absolutePath = path.resolve(inputPath);
   const stat = await fs.stat(absolutePath);
@@ -29,9 +34,12 @@ export async function loadPath(inputPath: string, options: SmartLoaderOptions = 
     options: normalizedOptions
   };
 
-  const files = stat.isDirectory() ? await scanDirectory(absolutePath, normalizedOptions) : [absolutePath];
+  const scanResult = stat.isDirectory()
+    ? await scanDirectory(absolutePath, normalizedOptions)
+    : { files: [absolutePath], skippedErrors: [] };
+  const { files, skippedErrors } = scanResult;
   const documents: LoadedDocument[] = [];
-  const errors: LoadError[] = [];
+  const errors: LoadError[] = [...skippedErrors];
 
   await asyncPool(files, normalizedOptions.concurrency, async (filePath) => {
     try {
@@ -65,10 +73,10 @@ export async function loadPath(inputPath: string, options: SmartLoaderOptions = 
     chunks,
     errors,
     summary: {
-      discoveredFiles: files.length,
+      discoveredFiles: files.length + skippedErrors.length,
       loadedFiles: documents.length,
-      skippedFiles: 0,
-      failedFiles: errors.length,
+      skippedFiles: skippedErrors.length,
+      failedFiles: errors.length - skippedErrors.length,
       chunks: chunks.length,
       assets: documents.reduce((sum, document) => sum + document.assets.length, 0)
     }
@@ -136,7 +144,7 @@ export async function loadFile(filePath: string, contextOrOptions: LoaderContext
   };
 }
 
-async function scanDirectory(dirPath: string, options: ReturnType<typeof normalizeOptions>): Promise<string[]> {
+async function scanDirectory(dirPath: string, options: ReturnType<typeof normalizeOptions>): Promise<DirectoryScanResult> {
   const pattern = options.recursive ? "**/*" : "*";
   const files = await fg(pattern, {
     cwd: dirPath,
@@ -147,7 +155,23 @@ async function scanDirectory(dirPath: string, options: ReturnType<typeof normali
     followSymbolicLinks: false
   });
 
-  return files.filter((filePath) => EXTENSION_TO_FORMAT.has(extensionOf(filePath)));
+  const supportedFiles: string[] = [];
+  const skippedErrors: LoadError[] = [];
+
+  for (const filePath of files) {
+    const extension = extensionOf(filePath);
+    if (EXTENSION_TO_FORMAT.has(extension)) {
+      supportedFiles.push(filePath);
+    } else {
+      skippedErrors.push({
+        sourcePath: filePath,
+        reason: `Unsupported file extension: ${extension || "(none)"}`,
+        code: "unsupported_file"
+      });
+    }
+  }
+
+  return { files: supportedFiles, skippedErrors };
 }
 
 async function describeAssets(

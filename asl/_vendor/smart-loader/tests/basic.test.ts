@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { createWriteStream, promises as fs } from "node:fs";
 import { once } from "node:events";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import { describe, expect, it } from "vitest";
 import { loadPath, splitText } from "../src/index.js";
@@ -15,20 +17,67 @@ const ONE_PIXEL_PNG = Buffer.from(
 );
 
 describe("smart-loader", () => {
-  it("loads text-native files from a folder", async () => {
+  it("loads supported files and reports unsupported directory inputs", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "smart-loader-test-"));
     await fs.writeFile(path.join(dir, "note.md"), "# Note\n\nHello world.");
     await fs.writeFile(path.join(dir, "data.json"), JSON.stringify({ ok: true, count: 2 }));
     await fs.writeFile(path.join(dir, "table.csv"), "name,score\nAda,10\nLinus,9\n");
     await fs.writeFile(path.join(dir, "image.png"), "not really an image");
+    await fs.writeFile(path.join(dir, "paper.tex"), "\\section{Unsupported}");
+    await fs.writeFile(path.join(dir, "notes.rtf"), "{\\rtf1 Unsupported}");
 
     const result = await loadPath(dir, { chunkSize: 1000, chunkOverlap: 100 });
 
-    expect(result.summary.discoveredFiles).toBe(3);
+    expect(result.summary.discoveredFiles).toBe(6);
     expect(result.summary.loadedFiles).toBe(3);
+    expect(result.summary.skippedFiles).toBe(3);
+    expect(result.summary.failedFiles).toBe(0);
     expect(result.documents.map((doc) => doc.relativePath).sort()).toEqual(["data.json", "note.md", "table.csv"]);
     expect(result.chunks.length).toBe(3);
     expect(result.documents.find((doc) => doc.relativePath === "table.csv")?.markdown).toContain("| name | score |");
+    expect(
+      result.errors
+        .map((error) => ({
+          sourcePath: error.sourcePath,
+          reason: error.reason,
+          code: error.code
+        }))
+        .sort((a, b) => a.sourcePath.localeCompare(b.sourcePath))
+    ).toEqual([
+      {
+        sourcePath: path.join(dir, "image.png"),
+        reason: "Unsupported file extension: .png",
+        code: "unsupported_file"
+      },
+      {
+        sourcePath: path.join(dir, "notes.rtf"),
+        reason: "Unsupported file extension: .rtf",
+        code: "unsupported_file"
+      },
+      {
+        sourcePath: path.join(dir, "paper.tex"),
+        reason: "Unsupported file extension: .tex",
+        code: "unsupported_file"
+      }
+    ]);
+
+    const cliPath = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
+    const mixedCli = spawnSync(process.execPath, [cliPath, dir, "--format", "json", "--fail-on-error"], {
+      encoding: "utf8"
+    });
+    expect(mixedCli.status).toBe(0);
+    expect(JSON.parse(mixedCli.stdout).summary).toMatchObject({ loadedFiles: 3, skippedFiles: 3, failedFiles: 0 });
+
+    const directUnsupportedCli = spawnSync(
+      process.execPath,
+      [cliPath, path.join(dir, "paper.tex"), "--format", "json", "--fail-on-error"],
+      { encoding: "utf8" }
+    );
+    expect(directUnsupportedCli.status).toBe(1);
+    expect(JSON.parse(directUnsupportedCli.stdout)).toMatchObject({
+      summary: { loadedFiles: 0, skippedFiles: 0, failedFiles: 1 },
+      errors: [{ sourcePath: path.join(dir, "paper.tex"), code: "load_failed" }]
+    });
   });
 
   it("warns about invalid UTF-8 replacement and NUL removal without rewriting normalized text", async () => {

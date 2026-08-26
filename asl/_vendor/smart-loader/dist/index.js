@@ -16,9 +16,12 @@ export async function loadPath(inputPath, options = {}) {
         rootPath,
         options: normalizedOptions
     };
-    const files = stat.isDirectory() ? await scanDirectory(absolutePath, normalizedOptions) : [absolutePath];
+    const scanResult = stat.isDirectory()
+        ? await scanDirectory(absolutePath, normalizedOptions)
+        : { files: [absolutePath], skippedErrors: [] };
+    const { files, skippedErrors } = scanResult;
     const documents = [];
-    const errors = [];
+    const errors = [...skippedErrors];
     await asyncPool(files, normalizedOptions.concurrency, async (filePath) => {
         try {
             const fileStat = await fs.stat(filePath);
@@ -49,10 +52,10 @@ export async function loadPath(inputPath, options = {}) {
         chunks,
         errors,
         summary: {
-            discoveredFiles: files.length,
+            discoveredFiles: files.length + skippedErrors.length,
             loadedFiles: documents.length,
-            skippedFiles: 0,
-            failedFiles: errors.length,
+            skippedFiles: skippedErrors.length,
+            failedFiles: errors.length - skippedErrors.length,
             chunks: chunks.length,
             assets: documents.reduce((sum, document) => sum + document.assets.length, 0)
         }
@@ -121,7 +124,22 @@ async function scanDirectory(dirPath, options) {
         ignore: options.ignore,
         followSymbolicLinks: false
     });
-    return files.filter((filePath) => EXTENSION_TO_FORMAT.has(extensionOf(filePath)));
+    const supportedFiles = [];
+    const skippedErrors = [];
+    for (const filePath of files) {
+        const extension = extensionOf(filePath);
+        if (EXTENSION_TO_FORMAT.has(extension)) {
+            supportedFiles.push(filePath);
+        }
+        else {
+            skippedErrors.push({
+                sourcePath: filePath,
+                reason: `Unsupported file extension: ${extension || "(none)"}`,
+                code: "unsupported_file"
+            });
+        }
+    }
+    return { files: supportedFiles, skippedErrors };
 }
 async function describeAssets(assets, sourcePath, relativePath, format, context) {
     if (!context.options.describeAsset) {

@@ -20,7 +20,7 @@ from asl.local_providers import cc_switch_settings_for_ref
 from asl.llm import LLMClient, LLMResult, parse_model_chain
 from asl.pipeline import ModelUnavailableError, PaperPipeline, TopicSelectionPending, init_project
 from asl.reference_search import ReferenceCandidate, ReferenceSearchSettings
-from asl.smart_loader import SmartLoader
+from asl.smart_loader import SmartLoader, SmartLoaderSettings
 from asl.templates import (
     draft_prompt,
     offline_draft,
@@ -226,6 +226,36 @@ def test_smart_loader_defaults_to_bundled_loader(monkeypatch: pytest.MonkeyPatch
     loader = SmartLoader()
 
     assert loader.cli_path.as_posix().endswith("asl/_vendor/smart-loader/dist/cli.js")
+
+
+def test_smart_loader_reports_unsupported_directory_inputs_downstream(tmp_path: Path) -> None:
+    source_dir = tmp_path / "mixed-inputs"
+    source_dir.mkdir()
+    (source_dir / "supported.md").write_text("SUPPORTED_MARKER\n", encoding="utf-8")
+    (source_dir / "unsupported.tex").write_text("\\section{Unsupported}\n", encoding="utf-8")
+    (source_dir / "figure.png").write_bytes(b"not really an image")
+
+    loader = SmartLoader(settings=SmartLoaderSettings(pdf_render_pages=False, ocr_assets=False))
+    group = loader.load_group("references", [source_dir], tmp_path / "loader-output")
+
+    assert group.summary == {
+        "discoveredFiles": 3,
+        "loadedFiles": 1,
+        "skippedFiles": 2,
+        "failedFiles": 0,
+        "chunks": 1,
+        "assets": 0,
+    }
+    assert sorted(
+        (error["sourcePath"], error["reason"], error["code"])
+        for error in group.errors
+    ) == [
+        (str(source_dir / "figure.png"), "Unsupported file extension: .png", "unsupported_file"),
+        (str(source_dir / "unsupported.tex"), "Unsupported file extension: .tex", "unsupported_file"),
+    ]
+    assert "SUPPORTED_MARKER" in group.markdown
+    assert f"{source_dir / 'figure.png'}: Unsupported file extension: .png" in group.markdown
+    assert f"{source_dir / 'unsupported.tex'}: Unsupported file extension: .tex" in group.markdown
 
 
 def test_rewrite_seed_draft_pdf_is_loaded_through_smart_loader(tmp_path: Path) -> None:
