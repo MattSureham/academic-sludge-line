@@ -4,16 +4,16 @@
 
 - **ID:** `ISSUE-20260825T024242Z-invalid-utf8-nul-warning`
 - **Title:** Surface invalid UTF-8 replacement and NUL removal in text normalization
-- **Status:** `REVIEW`
+- **Status:** `CLOSED`
 - **Severity:** `MEDIUM`
 - **Owner:** `agent:codex-utf8-nul-warning`
 - **Authority:** `AGENT`
 - **Review:** `INDEPENDENT`
 - **Created UTC:** `2026-08-25T02:42:42Z`
-- **Updated UTC:** `2026-08-25T02:54:44Z`
+- **Updated UTC:** `2026-08-26T03:15:00Z`
 - **Requirements:** [`PROJECT_SPEC.md`](../PROJECT_SPEC.md) §§2.5, 4.8 extraction uncertainty, 6.1, 11 invariant 13, and §12
 - **ADRs:** `NONE`
-- **Evidence:** [`EVIDENCE-20260824T073244Z-normalization-fixture-matrix`](../EVIDENCE/EVIDENCE-20260824T073244Z-normalization-fixture-matrix.md) and [`EVIDENCE-20260825T024729Z-invalid-utf8-nul-warning`](../EVIDENCE/EVIDENCE-20260825T024729Z-invalid-utf8-nul-warning.md)
+- **Evidence:** [`EVIDENCE-20260824T073244Z-normalization-fixture-matrix`](../EVIDENCE/EVIDENCE-20260824T073244Z-normalization-fixture-matrix.md), [`EVIDENCE-20260825T024729Z-invalid-utf8-nul-warning`](../EVIDENCE/EVIDENCE-20260825T024729Z-invalid-utf8-nul-warning.md), and [`EVIDENCE-20260826T031500Z-invalid-utf8-nul-warning-review`](../EVIDENCE/EVIDENCE-20260826T031500Z-invalid-utf8-nul-warning-review.md)
 - **Milestone:** `NONE`
 
 ## Problem
@@ -84,7 +84,22 @@ NOT APPLICABLE.
 
 - **Required:** `YES` — this slice changes externally observable warning behavior.
 
-No independent review round has been recorded yet.
+### 2026-08-26T03:15:00Z — agent:claude-code-independent-review
+
+- **Reviewed repository state:** Containing implementation commit `5b2471d5bac6b3c935e3b0023508b57bbdcdb403`, direct parent `5345bc1131157fcaea90287519db1f6b068be5bf`; `HEAD`, `origin/main`, and direct remote `main` all at the reviewed target; tracked tree clean with exactly the four recorded unrelated untracked JavaScript files.
+- **Reviewed target:** `5b2471d5bac6b3c935e3b0023508b57bbdcdb403`
+- **Open material findings:** `0`
+- **Scope:** Behavioral correctness, focused regression coverage, normalized-content preservation, false-positive avoidance for valid UTF-8 including encoded U+FFFD, warning propagation, compiled/runtime parity, scope containment, and issue/evidence/HANDOFF consistency for the invalid-UTF-8/NUL text-warning slice.
+- **Commands or procedures:** Read the specification sections, focused issue, implementation evidence, parent issue, and matrix authority before code; read the complete product/test diff and all governance deltas; read the shared decode/normalization helpers and index-level warning normalization; rebuilt the loader and confirmed zero drift between source and committed `dist/`; reran the loader suite (`7 passed in 697ms`), typecheck, the full Python suite (`76 passed in 8.03s`), and the sibling protocol validator; probed the compiled CLI against ten independent encoding fixtures; probed the Python adapter on degraded and valid inputs; checked product/untracked digests, remotes, links, HANDOFF structure, and port state. Full detail is in the linked evidence.
+- **Specification compliance:** The change satisfies the slice's §§2.5/4.8 and invariant-13 obligations: both evidenced plain-text degradations are now surfaced through the existing warning contract, which is itself unchanged.
+- **Correctness and regression findings:** Each warning fires exactly when its corresponding transformation occurs; normalized text/Markdown/chunks and result shape are preserved; valid UTF-8 including encoded U+FFFD is warning-free; all pre-existing tests pass unmodified; the focused tests cover both the degraded and valid directions.
+- **Architecture and complexity findings:** Two byte-level predicates and two existing-shape warning strings reusing the established JSON/CSV loader pattern; no new dependency, schema, encoding-repair strategy, or cross-module contract.
+- **Material findings and resolution conditions:** `NONE`. Non-material observation: `loadText` now returns an explicit (possibly empty) `warnings` array instead of omitting the field, but `src/index.ts:124` already normalizes `parsed.warnings ?? []`, so the serialized output shape is unchanged.
+- **Limitations:** Synthetic byte-level fixtures only; no representative corpus or legacy-encoding inference; same host class as the implementor; labels are attributable, not authenticated; the pre-change byte-identical digest is the implementor's recorded claim, corroborated structurally rather than re-derived.
+- **Residual risks:** Other recorded silent-degradation cases and any typed fidelity schema remain open under the parent normalization/capability issue.
+- **Evidence:** [`EVIDENCE-20260826T031500Z-invalid-utf8-nul-warning-review`](../EVIDENCE/EVIDENCE-20260826T031500Z-invalid-utf8-nul-warning-review.md)
+- **Disposition:** `APPROVED`
+- **Prior-round resolution:** `FIRST ROUND`
 
 ## Blocker
 
@@ -95,7 +110,7 @@ No independent review round has been recorded yet.
 
 ## Residual uncertainty
 
-- Independent review of the eventual immutable implementation target is pending.
+- Resolved: fresh independent review of `5b2471d` recorded `APPROVED` with zero open material findings at `2026-08-26T03:15:00Z`.
 - Other recorded silent-degradation cases and any broader semantic-normalization contract remain outside this focused child and owned by [`ISSUE-20260824T024051Z-normalization-capability-coverage`](ISSUE-20260824T024051Z-normalization-capability-coverage.md).
 
 ## Activity history
@@ -110,6 +125,7 @@ Append meaningful transitions and corrections; do not replace prior findings.
 | `2026-08-25T02:45:24Z` | `agent:codex-utf8-nul-warning` | `IMPLEMENTING` | `VERIFYING` | Added warning-only byte diagnostics in the plain-text route plus degraded and valid regressions; focused tests, build/typecheck, compiled output comparison, and downstream propagation probe pass. |
 | `2026-08-25T02:47:29Z` | `agent:codex-utf8-nul-warning` | `VERIFYING` | `REVIEW` | Complete matrix comparison and full validation passed; recorded implementation evidence and left the externally observable warning change for fresh independent review. |
 | `2026-08-25T02:54:44Z` | `agent:codex-utf8-nul-warning` | `REVIEW` | `REVIEW` | Final governance, scope, integrity, dirty-set, and HANDOFF checks passed; the issue remains open solely for fresh independent review. |
+| `2026-08-26T03:15:00Z` | `agent:claude-code-independent-review` | `REVIEW` | `CLOSED` | Fresh independent review of `5b2471d` recorded `APPROVED` with zero open material findings after ten compiled-CLI encoding probes, adapter propagation checks, suites, build parity, and scope checks. |
 
 ## Closure checklist
 
@@ -117,7 +133,7 @@ Append meaningful transitions and corrections; do not replace prior findings.
 - [x] The change or resolution is recorded.
 - [x] Required verification ran and evidence is linked; unavailable checks remain explicit.
 - [ ] If `Review: SELF`, the Self-review outcome is `COMPLETE` and no independent-review risk category applies.
-- [ ] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
+- [x] If `Review: INDEPENDENT`, the latest review round is `APPROVED` and shows that prior material findings are resolved.
 - [x] Required human authority is recorded in the owning artifact: product/contract in `PROJECT_SPEC.md`, architecture in an accepted ADR, or both for a mixed decision.
 - [x] New complexity is covered, removed, or linked to an explicitly accepted open debt issue.
 - [x] Residual uncertainty is absent or explicitly owned.
